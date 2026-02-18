@@ -130,6 +130,7 @@ describe("api integration", () => {
       agentToken: string;
       hosts: string[];
       tlsModes: Record<string, "termination" | "passthrough">;
+      maxConcurrentConns: number;
     };
 
     const claims = jwt.verify(startBody.agentToken, process.env.AGENT_JWT_SECRET!) as {
@@ -138,6 +139,7 @@ describe("api integration", () => {
       basicAuthUser: string;
       basicAuthPassword: string;
       ipAllowlist: string[];
+      maxConcurrentConns: number;
       tokenType: string;
     };
 
@@ -145,10 +147,12 @@ describe("api integration", () => {
     expect(claims.basicAuthUser).toBe("demo");
     expect(claims.basicAuthPassword).toBe("secret");
     expect(claims.ipAllowlist).toContain("127.0.0.1/32");
+    expect(claims.maxConcurrentConns).toBe(500);
     expect(claims.hosts).toContain(domainName);
     expect(claims.hosts.some((host) => host.endsWith(`.${process.env.BASE_DOMAIN}`))).toBe(true);
     expect(claims.tlsModes[domainName]).toBe("termination");
     expect(startBody.hosts).toContain(domainName);
+    expect(startBody.maxConcurrentConns).toBe(500);
 
     const adminDomainsRes = await app.inject({
       method: "GET",
