@@ -17,6 +17,50 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Ops observability + paging baseline:
+  - Added worker Prometheus endpoints:
+    - billing worker: `:9464/metrics`
+    - certificate worker: `:9465/metrics`
+  - Added webhook latency SLO metrics (`fdt_billing_webhook_processing_latency_seconds_p95`) with provider-scoped failure/stale gauges.
+  - Added certificate metrics for domain lifecycle state, event backlog, and runbook trigger counters.
+  - Added Prometheus scrape + rule wiring (`infra/monitoring/prometheus.yml`, `infra/monitoring/alert-rules.yml`).
+  - Added first responder runbook doc: `docs/runbooks/ops-oncall.md`.
+- Certificate lifecycle hardening (event-driven):
+  - Added certificate lifecycle event ingest API (`POST /v1/domains/cert-events`) with token auth.
+  - Added `certificate_lifecycle_events` queue + worker apply/retry lifecycle with bounded backoff.
+  - Added domain-level failure policy controls (`standard|strict|hold`) and retry state fields.
+  - Added per-domain certificate event history endpoint (`GET /v1/domains/custom/:id/cert-events`).
+  - Added admin/domain visibility for failure policy, retry windows, and event-derived state.
+- Payment production hardening + finance ops queueing:
+  - Added signed runbook replay endpoint (`POST /v1/billing/runbook/replay`) for provider/event-class replay automation.
+  - Added worker-billing automatic runbook replay triggers on webhook failure spikes.
+  - Added dunning lifecycle model (`billing_dunning_cases`) and APIs:
+    - user: `GET /v1/billing/dunning`
+    - admin: `GET /v1/admin/billing-dunning`
+  - Added dunning orchestration loop in billing worker with staged retries and optional signed notification webhook.
+  - Added scheduled finance report export queue (`billing_report_exports`) + admin APIs:
+    - `POST /v1/admin/billing-reports/exports`
+    - `GET /v1/admin/billing-reports/exports`
+  - Added billing worker export processing with CSV packaging and optional external sink delivery.
+- Multi-region edge foundations:
+  - Added tunnel region selection (`ALLOWED_REGIONS`, tunnel `region` create/update/start paths).
+  - Added region claim propagation into agent token and exchange payload.
+  - Added relay region identity and region-aware edge assignment (`RELAY_REGION`, `RELAY_EDGE_POOL`).
+  - Added CLI region flags for `http`/`tcp` and config-file `region` support.
+- Enterprise controls + security baseline expansion:
+  - Added team/org RBAC APIs (`/v1/admin/members*`) with owner safety checks.
+  - Added SSO config scaffold APIs (`GET/PUT /v1/admin/sso`).
+  - Added immutable audit hash-chain fields and integrity check API (`GET /v1/admin/audit/integrity`).
+  - Added token revoke list (`auth_revoked_tokens`) with runtime enforcement in auth middleware.
+  - Added token revoke API (`POST /v1/auth/token/revoke`) and anomaly logging.
+  - Added authtoken rotation ledger (`secret_rotations`) with admin rotate endpoint.
+  - Added security anomaly event store (`security_anomaly_events`) for auth failures/rate-limit signals.
+- UI/admin expansion:
+  - Added admin pages: members, SSO, dunning ops, report exports.
+  - Extended billing UI with dunning visibility and domain UI with failure-policy controls.
+- Test/CI coverage:
+  - Added integration tests for RBAC+SSO+report-queue, token revoke + runbook replay + dunning, and cert-event ingest + domain policy controls.
+  - Kept CI integration command compatible by building `@fdt/config` before API integration tests.
 - Invoice/tax records and reporting exports:
   - Added invoice and tax ledgers (`billing_invoices`, `billing_tax_records`) plus migrations.
   - Added user invoice APIs (`/v1/billing/invoices`, `/v1/billing/invoices/export`).
@@ -86,22 +130,22 @@ Phase 1 (MVP hardening + production readiness improvements)
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
-  - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
-  - Add on-call runbooks tied to cert alert signals.
+  - Event-driven issuance/renewal status integration shipped; production cert-manager webhook auth/validation hardening remains.
+  - Alert-runbook trigger plumbing shipped; source provenance validation and stricter emitter identity controls remain.
 - Payment production hardening:
-  - Add signed runbook triggers to replay by provider/event class automatically.
-  - Add dashboard SLOs and paging policies for webhook processing latency.
-  - Extend dunning workflows with notification orchestration and retry policy tuning.
+  - Signed runbook replay automation and staged dunning orchestration shipped.
+  - Dashboard SLO/paging baseline shipped via Prometheus worker metrics + alert rules.
+  - Tune retry and notification policy by provider in production telemetry.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Integrate real issuance/renewal events from cert manager.
-   - Add retry/backoff semantics and domain-level failure policy.
+   - Add stricter cert-manager source validation and per-cluster provenance controls.
+   - Add renewal SLA escalation and incident routing policy tuning by environment.
 2. Payment hardening + finance ops:
-   - Failed-payment recovery and dunning workflows.
-   - Finance reporting packaging (scheduled exports, external sinks).
+   - Provider-specific dunning cadence tuning + richer comms channels.
+   - Finance export sink adapters (S3/object-store, warehouse loaders).
 3. Multi-region edge foundations:
-   - Region-aware relay registration and host assignment.
+   - Active relay registration heartbeat and region-aware host scheduling in control plane.
 4. Enterprise controls:
    - Team/org RBAC expansion.
    - SSO and immutable audit controls.

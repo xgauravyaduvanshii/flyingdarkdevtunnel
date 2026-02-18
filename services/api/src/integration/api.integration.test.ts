@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
@@ -13,6 +13,9 @@ const defaults: Record<string, string> = {
   AGENT_JWT_SECRET: "12345678901234567890123456789012",
   BASE_DOMAIN: "tunnel.yourdomain.com",
   DOMAIN_VERIFY_STRICT: "false",
+  ALLOWED_REGIONS: "us,eu,ap",
+  BILLING_RUNBOOK_SIGNING_SECRET: "integration_runbook_secret_32_chars_minimum",
+  CERT_EVENT_INGEST_TOKEN: "integration_cert_ingest_token",
 };
 
 for (const [key, value] of Object.entries(defaults)) {
@@ -436,6 +439,353 @@ describe("api integration", () => {
     expect(adminExportTaxRes.statusCode).toBe(200);
     expect(adminExportTaxRes.body).toContain("tax_type");
     expect(adminExportTaxRes.body).toContain(taxId);
+  }, 30_000);
+
+  it("supports team RBAC expansion, SSO config, and billing report export queue", async () => {
+    const email = `integration-rbac-owner-${randomUUID()}@example.com`;
+    const teammateEmail = `integration-rbac-user-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const ownerRegister = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration RBAC Org" },
+    });
+    expect(ownerRegister.statusCode).toBe(201);
+    const ownerToken = (ownerRegister.json() as { accessToken: string }).accessToken;
+
+    const teammateRegister = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email: teammateEmail, password, orgName: "Teammate Org" },
+    });
+    expect(teammateRegister.statusCode).toBe(201);
+
+    const addMemberRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { email: teammateEmail, role: "viewer" },
+    });
+    expect(addMemberRes.statusCode).toBe(200);
+
+    const membersRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/members",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(membersRes.statusCode).toBe(200);
+    const membersBody = membersRes.json() as { members: Array<{ user_id: string; email: string; role: string }> };
+    const teammateMembership = membersBody.members.find((member) => member.email === teammateEmail);
+    expect(teammateMembership).toBeTruthy();
+    expect(teammateMembership?.role).toBe("viewer");
+
+    const updateRoleRes = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/members/${teammateMembership!.user_id}/role`,
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { role: "billing" },
+    });
+    expect(updateRoleRes.statusCode).toBe(200);
+
+    const ssoUpsertRes = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/sso",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: {
+        provider: "saml",
+        enabled: true,
+        issuer: "https://idp.integration.example.com",
+        entrypoint: "https://idp.integration.example.com/sso",
+        audience: "urn:fdt:integration",
+      },
+    });
+    expect(ssoUpsertRes.statusCode).toBe(200);
+
+    const ssoGetRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/sso",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(ssoGetRes.statusCode).toBe(200);
+    const ssoBody = ssoGetRes.json() as {
+      sso: { provider: "saml" | "oidc"; enabled: boolean; issuer: string | null };
+    };
+    expect(ssoBody.sso.provider).toBe("saml");
+    expect(ssoBody.sso.enabled).toBe(true);
+
+    const reportCreateRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/billing-reports/exports",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { dataset: "finance_events", destination: "inline" },
+    });
+    expect(reportCreateRes.statusCode).toBe(200);
+    const reportCreateBody = reportCreateRes.json() as { ok: boolean; id: string };
+    expect(reportCreateBody.ok).toBe(true);
+
+    const reportListRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/billing-reports/exports?limit=20",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(reportListRes.statusCode).toBe(200);
+    const reportListBody = reportListRes.json() as {
+      exports: Array<{ id: string; dataset: string; status: string }>;
+    };
+    expect(reportListBody.exports.some((job) => job.id === reportCreateBody.id && job.dataset === "finance_events")).toBe(true);
+  }, 30_000);
+
+  it("enforces token revoke list and signed runbook replay with dunning visibility", async () => {
+    const email = `integration-revoke-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Revoke Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const registerBody = registerRes.json() as { accessToken: string };
+    const revokedAccessToken = registerBody.accessToken;
+    const claims = jwt.verify(revokedAccessToken, process.env.JWT_SECRET!) as { orgId: string };
+
+    const revokeRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/token/revoke",
+      headers: { authorization: `Bearer ${revokedAccessToken}` },
+      payload: { reason: "integration revoke current token" },
+    });
+    expect(revokeRes.statusCode).toBe(200);
+
+    const revokedAccessRes = await app.inject({
+      method: "GET",
+      url: "/v1/tunnels",
+      headers: { authorization: `Bearer ${revokedAccessToken}` },
+    });
+    expect(revokedAccessRes.statusCode).toBe(401);
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: { email, password },
+    });
+    expect(loginRes.statusCode).toBe(200);
+    const freshAccessToken = (loginRes.json() as { accessToken: string }).accessToken;
+
+    const dunningId = randomUUID();
+    await app.db.query(
+      `
+        INSERT INTO billing_dunning_cases (
+          id,
+          org_id,
+          provider,
+          subscription_ref,
+          status,
+          stage,
+          retry_count,
+          next_attempt_at,
+          latest_event_type
+        )
+        VALUES ($1, $2, 'stripe', $3, 'open', 2, 1, NOW(), 'invoice.payment_failed')
+      `,
+      [dunningId, claims.orgId, `sub_dunning_${randomUUID().replace(/-/g, "")}`],
+    );
+
+    const userDunningRes = await app.inject({
+      method: "GET",
+      url: "/v1/billing/dunning?limit=20",
+      headers: { authorization: `Bearer ${freshAccessToken}` },
+    });
+    expect(userDunningRes.statusCode).toBe(200);
+    const userDunningBody = userDunningRes.json() as { cases: Array<{ id: string; status: string }> };
+    expect(userDunningBody.cases.some((row) => row.id === dunningId && row.status === "open")).toBe(true);
+
+    const adminDunningRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/billing-dunning?limit=50",
+      headers: { authorization: `Bearer ${freshAccessToken}` },
+    });
+    expect(adminDunningRes.statusCode).toBe(200);
+    const adminDunningBody = adminDunningRes.json() as {
+      cases: Array<{ id: string; org_id: string }>;
+    };
+    expect(adminDunningBody.cases.some((row) => row.id === dunningId && row.org_id === claims.orgId)).toBe(true);
+
+    const eventRowId = randomUUID();
+    const eventPayload = {
+      event: "subscription.activated",
+      payload: {
+        subscription: {
+          entity: {
+            id: `sub_replay_${randomUUID().replace(/-/g, "")}`,
+            plan_id: `plan_unmapped_${randomUUID().slice(0, 8)}`,
+            status: "active",
+            notes: { orgId: claims.orgId },
+          },
+        },
+      },
+    };
+    const eventBodyRaw = JSON.stringify(eventPayload);
+
+    await app.db.query(
+      `
+        INSERT INTO billing_webhook_events
+          (id, provider, event_id, provider_event_type, payload_hash, payload_json, status, attempts, replay_count)
+        VALUES
+          ($1, 'razorpay', $2, 'subscription.activated', $3, $4::jsonb, 'failed', 1, 0)
+      `,
+      [eventRowId, `evt_runbook_${randomUUID().replace(/-/g, "")}`, `hash_${randomUUID().replace(/-/g, "")}`, eventBodyRaw],
+    );
+
+    const runbookPayload = JSON.stringify({
+      provider: "razorpay",
+      eventClass: "subscription",
+      limit: 20,
+      force: false,
+    });
+    const timestamp = `${Math.floor(Date.now() / 1000)}`;
+    const signature = createHmac("sha256", process.env.BILLING_RUNBOOK_SIGNING_SECRET!)
+      .update(`${timestamp}.${runbookPayload}`)
+      .digest("hex");
+
+    const runbookRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/runbook/replay",
+      headers: {
+        "content-type": "application/json",
+        "x-fdt-runbook-timestamp": timestamp,
+        "x-fdt-runbook-signature": signature,
+      },
+      payload: runbookPayload,
+    });
+    expect(runbookRes.statusCode).toBe(200);
+    const runbookBody = runbookRes.json() as { ok: boolean; attempted: number; processed: number };
+    expect(runbookBody.ok).toBe(true);
+    expect(runbookBody.attempted).toBeGreaterThan(0);
+    expect(runbookBody.processed).toBeGreaterThan(0);
+
+    const replayedEvent = await app.db.query<{ status: string }>(
+      `SELECT status FROM billing_webhook_events WHERE id = $1 LIMIT 1`,
+      [eventRowId],
+    );
+    expect(replayedEvent.rows[0]?.status).toBe("processed");
+  }, 30_000);
+
+  it("accepts certificate lifecycle event ingest and per-domain failure policy controls", async () => {
+    const email = `integration-certevents-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Cert Events Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const accessToken = (registerRes.json() as { accessToken: string }).accessToken;
+
+    const usersRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/users",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(usersRes.statusCode).toBe(200);
+    const userId = (usersRes.json() as { users: Array<{ id: string; email: string }> }).users.find((u) => u.email === email)?.id;
+    expect(userId).toBeTruthy();
+
+    const promoteRes = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/users/${userId}/plan`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { planCode: "pro" },
+    });
+    expect(promoteRes.statusCode).toBe(200);
+
+    const tunnelRes = await app.inject({
+      method: "POST",
+      url: "/v1/tunnels",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        name: "cert-events-http",
+        protocol: "http",
+        localAddr: "http://localhost:3000",
+        region: "eu",
+      },
+    });
+    expect(tunnelRes.statusCode).toBe(201);
+    const tunnelBody = tunnelRes.json() as { id: string; region: string };
+    expect(tunnelBody.region).toBe("eu");
+
+    const domainName = `cert-${randomUUID().slice(0, 8)}.example.com`;
+    const createDomainRes = await app.inject({
+      method: "POST",
+      url: "/v1/domains/custom",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { domain: domainName, tlsMode: "termination" },
+    });
+    expect(createDomainRes.statusCode).toBe(201);
+    const domainId = (createDomainRes.json() as { id: string }).id;
+
+    const verifyRes = await app.inject({
+      method: "POST",
+      url: `/v1/domains/custom/${domainId}/verify`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {},
+    });
+    expect(verifyRes.statusCode).toBe(200);
+
+    const routeRes = await app.inject({
+      method: "POST",
+      url: `/v1/domains/custom/${domainId}/route`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { tunnelId: tunnelBody.id, tlsMode: "termination" },
+    });
+    expect(routeRes.statusCode).toBe(200);
+
+    const policyRes = await app.inject({
+      method: "PATCH",
+      url: `/v1/domains/custom/${domainId}/failure-policy`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { policy: "strict" },
+    });
+    expect(policyRes.statusCode).toBe(200);
+
+    const certEventRes = await app.inject({
+      method: "POST",
+      url: "/v1/domains/cert-events",
+      headers: {
+        "content-type": "application/json",
+        "x-cert-event-token": process.env.CERT_EVENT_INGEST_TOKEN!,
+      },
+      payload: {
+        source: "cert_manager",
+        sourceEventId: `evt_cert_${randomUUID().replace(/-/g, "")}`,
+        domainId,
+        eventType: "renewal_failed",
+        reason: "acme challenge timed out",
+      },
+    });
+    expect(certEventRes.statusCode).toBe(202);
+
+    const eventsRes = await app.inject({
+      method: "GET",
+      url: `/v1/domains/custom/${domainId}/cert-events?limit=20`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(eventsRes.statusCode).toBe(200);
+    const eventsBody = eventsRes.json() as { events: Array<{ event_type: string; status: string }> };
+    expect(eventsBody.events.some((event) => event.event_type === "renewal_failed" && event.status === "pending")).toBe(true);
+
+    const domainsRes = await app.inject({
+      method: "GET",
+      url: "/v1/domains/custom",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(domainsRes.statusCode).toBe(200);
+    const domainsBody = domainsRes.json() as {
+      domains: Array<{ id: string; cert_failure_policy: "standard" | "strict" | "hold" }>;
+    };
+    expect(domainsBody.domains.find((domain) => domain.id === domainId)?.cert_failure_policy).toBe("strict");
   }, 30_000);
 
   it("deduplicates Razorpay webhook events with idempotent processing", async () => {

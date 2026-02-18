@@ -9,6 +9,7 @@ const createTunnelSchema = z.object({
   protocol: z.enum(["http", "https", "tcp"]),
   localAddr: z.string().min(3),
   requestedSubdomain: z.string().regex(/^[a-z0-9-]{3,40}$/).optional(),
+  region: z.string().min(2).max(16).optional(),
   inspect: z.boolean().default(true),
   basicAuthUser: z.string().optional(),
   basicAuthPassword: z.string().optional(),
@@ -18,6 +19,10 @@ const createTunnelSchema = z.object({
 const updateTunnelSchema = createTunnelSchema.partial();
 
 export const tunnelRoutes: FastifyPluginAsync = async (app) => {
+  const allowedRegions = app.env.ALLOWED_REGIONS.split(",")
+    .map((region) => region.trim().toLowerCase())
+    .filter(Boolean);
+
   app.addHook("preHandler", app.auth.requireAuth);
 
   app.get("/", async (request) => {
@@ -50,6 +55,11 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const id = uuidv4();
+    const region = (body.region ?? allowedRegions[0] ?? "us").toLowerCase();
+    if (!allowedRegions.includes(region)) {
+      return reply.code(400).send({ message: `Region is not allowed. Allowed regions: ${allowedRegions.join(", ")}` });
+    }
+
     const subdomain = body.protocol === "tcp" ? null : body.requestedSubdomain ?? generateSubdomain("t");
     const publicUrl =
       body.protocol === "tcp"
@@ -59,8 +69,8 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
     await app.db.query(
       `
       INSERT INTO tunnels
-      (id, org_id, name, protocol, local_addr, subdomain, public_url, status, inspect, basic_auth_user, basic_auth_password, ip_allowlist)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'stopped', $8, $9, $10, $11)
+      (id, org_id, name, protocol, local_addr, subdomain, public_url, status, inspect, basic_auth_user, basic_auth_password, ip_allowlist, region)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'stopped', $8, $9, $10, $11, $12)
     `,
       [
         id,
@@ -74,6 +84,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
         body.basicAuthUser ?? null,
         body.basicAuthPassword ?? null,
         body.ipAllowlist ?? [],
+        region,
       ],
     );
 
@@ -83,10 +94,10 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       action: "tunnel.create",
       entityType: "tunnel",
       entityId: id,
-      metadata: { protocol: body.protocol, publicUrl }
+      metadata: { protocol: body.protocol, publicUrl, region }
     });
 
-    return reply.code(201).send({ id, publicUrl, subdomain, status: "stopped" });
+    return reply.code(201).send({ id, publicUrl, subdomain, status: "stopped", region });
   });
 
   app.patch("/:id", async (request, reply) => {
@@ -102,6 +113,10 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ message: "Tunnel not found" });
     }
 
+    if (body.region && !allowedRegions.includes(body.region.toLowerCase())) {
+      return reply.code(400).send({ message: `Region is not allowed. Allowed regions: ${allowedRegions.join(", ")}` });
+    }
+
     const patchMap: Record<string, unknown> = {
       name: body.name,
       local_addr: body.localAddr,
@@ -109,6 +124,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       basic_auth_user: body.basicAuthUser,
       basic_auth_password: body.basicAuthPassword,
       ip_allowlist: body.ipAllowlist,
+      region: body.region?.toLowerCase(),
       updated_at: new Date().toISOString()
     };
 
@@ -157,18 +173,20 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/:id/start", async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const entitlements = await getEntitlements(app, request.authUser!.orgId);
 
     const tunnel = await app.db.query<{
       id: string;
       protocol: "http" | "https" | "tcp";
       subdomain: string | null;
       org_id: string;
+      region: string;
       basic_auth_user: string | null;
       basic_auth_password: string | null;
       ip_allowlist: string[] | null;
     }>(
       `
-      SELECT id, protocol, subdomain, org_id, basic_auth_user, basic_auth_password, ip_allowlist
+      SELECT id, protocol, subdomain, org_id, region, basic_auth_user, basic_auth_password, ip_allowlist
       FROM tunnels
       WHERE id = $1 AND org_id = $2
     `,
@@ -219,6 +237,8 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       basicAuthUser: row.basic_auth_user ?? null,
       basicAuthPassword: row.basic_auth_password ?? null,
       ipAllowlist: row.ip_allowlist ?? [],
+      region: row.region ?? "us",
+      maxConcurrentConns: entitlements.max_concurrent_conns,
     });
 
     await app.audit.log({
@@ -229,7 +249,15 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       entityId: params.id
     });
 
-    return { ok: true, sessionId, agentToken, hosts, tlsModes };
+    return {
+      ok: true,
+      sessionId,
+      agentToken,
+      hosts,
+      tlsModes,
+      region: row.region ?? "us",
+      maxConcurrentConns: entitlements.max_concurrent_conns,
+    };
   });
 
   app.post("/:id/stop", async (request, reply) => {

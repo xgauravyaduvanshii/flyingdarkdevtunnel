@@ -8,6 +8,7 @@ This folder contains implementation-focused documentation for engineers operatin
 - `docs/certificate-lifecycle.md`: certificate state model, worker behavior, and hardening queue.
 - `docs/security-and-tls.md`: TLS termination/passthrough, auth, and edge policy enforcement.
 - `docs/testing-and-ci.md`: integration strategy, CI services, and smoke test flow.
+- `docs/runbooks/ops-oncall.md`: alert-to-action runbooks for billing webhook and certificate lifecycle incidents.
 
 ## Living documentation
 These docs are updated alongside code changes. The current implementation tracker is at `plan.md`.

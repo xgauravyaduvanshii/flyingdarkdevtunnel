@@ -42,6 +42,7 @@ type claims struct {
 	TunnelID          string            `json:"tunnelId"`
 	Protocol          string            `json:"protocol"`
 	Subdomain         string            `json:"subdomain"`
+	Region            string            `json:"region"`
 	Hosts             []string          `json:"hosts"`
 	TLSModes          map[string]string `json:"tlsModes"`
 	BasicAuthUser     string            `json:"basicAuthUser"`
@@ -67,6 +68,7 @@ type session struct {
 	TunnelID          string
 	Protocol          string
 	Subdomain         string
+	Region            string
 	PublicTCPPort     int
 	PublicHosts       []string
 	TLSModes          map[string]string
@@ -81,6 +83,8 @@ type session struct {
 
 type relayState struct {
 	BaseDomain         string
+	Region             string
+	EdgePool           map[string][]string
 	AgentSecret        string
 	HTTPPort           int
 	HTTPSPort          int
@@ -115,6 +119,8 @@ func newRelayState() *relayState {
 
 	state := &relayState{
 		BaseDomain:         getEnv("RELAY_BASE_DOMAIN", "tunnel.yourdomain.com"),
+		Region:             strings.ToLower(strings.TrimSpace(getEnv("RELAY_REGION", "us"))),
+		EdgePool:           parseEdgePool(getEnv("RELAY_EDGE_POOL", "us=us-edge-1|us-edge-2|us-edge-3")),
 		AgentSecret:        getEnv("RELAY_AGENT_JWT_SECRET", "replace_with_at_least_32_characters_here"),
 		HTTPPort:           getEnvInt("RELAY_HTTP_PORT", 8080),
 		HTTPSPort:          getEnvInt("RELAY_HTTPS_PORT", 8443),
@@ -134,6 +140,13 @@ func newRelayState() *relayState {
 		ByHost:             map[string]*session{},
 		HostModes:          map[string]string{},
 		ByTCPPort:          map[int]*session{},
+	}
+
+	if state.Region == "" {
+		state.Region = "us"
+	}
+	if len(state.EdgePool) == 0 {
+		state.EdgePool[state.Region] = []string{fmt.Sprintf("%s-edge-1", state.Region)}
 	}
 
 	if state.BaseDomain != "" {
@@ -212,6 +225,7 @@ func startControlServer(state *relayState) error {
 			TunnelID:          parsedClaims.TunnelID,
 			Protocol:          parsedClaims.Protocol,
 			Subdomain:         parsedClaims.Subdomain,
+			Region:            strings.ToLower(strings.TrimSpace(parsedClaims.Region)),
 			PublicHosts:       uniqueHosts(parsedClaims.Hosts),
 			TLSModes:          parsedClaims.TLSModes,
 			BasicAuthUser:     parsedClaims.BasicAuthUser,
@@ -222,6 +236,9 @@ func startControlServer(state *relayState) error {
 		}
 		if s.TLSModes == nil {
 			s.TLSModes = map[string]string{}
+		}
+		if s.Region == "" {
+			s.Region = state.Region
 		}
 
 		log.Printf("agent connected tunnel=%s protocol=%s", s.TunnelID, s.Protocol)
@@ -443,6 +460,24 @@ func (state *relayState) isTLSHostAllowed(host string) bool {
 	return false
 }
 
+func (state *relayState) pickEdge(region string) string {
+	state.Mu.RLock()
+	defer state.Mu.RUnlock()
+
+	normalizedRegion := strings.ToLower(strings.TrimSpace(region))
+	if normalizedRegion == "" {
+		normalizedRegion = state.Region
+	}
+
+	if edges := state.EdgePool[normalizedRegion]; len(edges) > 0 {
+		return edges[mrand.Intn(len(edges))]
+	}
+	if edges := state.EdgePool[state.Region]; len(edges) > 0 {
+		return edges[mrand.Intn(len(edges))]
+	}
+	return fmt.Sprintf("%s-edge-1", normalizedRegion)
+}
+
 func startTLSPassthroughServer(state *relayState) error {
 	addr := fmt.Sprintf(":%d", state.TLSPassthroughPort)
 	listener, err := net.Listen("tcp", addr)
@@ -539,6 +574,16 @@ func handleTunnelOpen(state *relayState, s *session, payload map[string]any) {
 		return
 	}
 
+	effectiveRegion := strings.ToLower(strings.TrimSpace(req.Region))
+	if s.Region != "" {
+		effectiveRegion = s.Region
+	}
+	if effectiveRegion == "" {
+		effectiveRegion = state.Region
+	}
+	s.Region = effectiveRegion
+	assignedEdge := state.pickEdge(effectiveRegion)
+
 	if req.Protocol == "http" || req.Protocol == "https" {
 		hosts := uniqueHosts(s.PublicHosts)
 		if len(hosts) == 0 {
@@ -565,7 +610,7 @@ func handleTunnelOpen(state *relayState, s *session, payload map[string]any) {
 			Type:         "tunnel.opened",
 			TunnelID:     s.TunnelID,
 			PublicURL:    fmt.Sprintf("%s://%s", publicScheme, hosts[0]),
-			AssignedEdge: fmt.Sprintf("us-edge-%d", mrand.Intn(4)+1),
+			AssignedEdge: assignedEdge,
 		}
 		_ = writeJSON(s, response)
 		return
@@ -586,7 +631,7 @@ func handleTunnelOpen(state *relayState, s *session, payload map[string]any) {
 			Type:         "tunnel.opened",
 			TunnelID:     s.TunnelID,
 			PublicURL:    fmt.Sprintf("tcp://%s:%d", state.BaseDomain, port),
-			AssignedEdge: fmt.Sprintf("us-edge-%d", mrand.Intn(4)+1),
+			AssignedEdge: assignedEdge,
 		}
 		_ = writeJSON(s, response)
 		return
@@ -1070,6 +1115,38 @@ func randomSubdomain() string {
 		builder.WriteRune(letters[mrand.Intn(len(letters))])
 	}
 	return builder.String()
+}
+
+func parseEdgePool(raw string) map[string][]string {
+	pool := map[string][]string{}
+	entries := strings.Split(raw, ",")
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		region := strings.ToLower(strings.TrimSpace(parts[0]))
+		if region == "" {
+			continue
+		}
+		rawEdges := strings.Split(parts[1], "|")
+		edges := make([]string, 0, len(rawEdges))
+		for _, edge := range rawEdges {
+			edge = strings.TrimSpace(edge)
+			if edge == "" {
+				continue
+			}
+			edges = append(edges, edge)
+		}
+		if len(edges) > 0 {
+			pool[region] = edges
+		}
+	}
+	return pool
 }
 
 func getEnv(key string, fallback string) string {

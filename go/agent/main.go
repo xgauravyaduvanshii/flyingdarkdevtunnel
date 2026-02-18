@@ -50,6 +50,7 @@ type startConfig struct {
 		Protocol  string `yaml:"protocol"`
 		TunnelID  string `yaml:"tunnelId"`
 		LocalAddr string `yaml:"localAddr"`
+		Region    string `yaml:"region"`
 	} `yaml:"tunnels"`
 }
 
@@ -115,7 +116,7 @@ func loginCmd() *cobra.Command {
 }
 
 func httpCmd() *cobra.Command {
-	var tunnelID, localAddr, authtoken, apiURL, relayURL, requestedSubdomain string
+	var tunnelID, localAddr, authtoken, apiURL, relayURL, requestedSubdomain, region string
 
 	cmd := &cobra.Command{
 		Use:   "http",
@@ -139,7 +140,7 @@ func httpCmd() *cobra.Command {
 				localAddr = "http://localhost:3000"
 			}
 
-			return runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, "http", requestedSubdomain)
+			return runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, "http", requestedSubdomain, region)
 		},
 	}
 
@@ -149,13 +150,14 @@ func httpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api", "", "Control plane API URL")
 	cmd.Flags().StringVar(&relayURL, "relay", "", "Relay control websocket URL")
 	cmd.Flags().StringVar(&requestedSubdomain, "subdomain", "", "Requested subdomain override")
+	cmd.Flags().StringVar(&region, "region", "us", "Edge region preference (us/eu/ap)")
 	_ = cmd.MarkFlagRequired("tunnel-id")
 
 	return cmd
 }
 
 func tcpCmd() *cobra.Command {
-	var tunnelID, localAddr, authtoken, apiURL, relayURL string
+	var tunnelID, localAddr, authtoken, apiURL, relayURL, region string
 
 	cmd := &cobra.Command{
 		Use:   "tcp",
@@ -179,7 +181,7 @@ func tcpCmd() *cobra.Command {
 				localAddr = "127.0.0.1:22"
 			}
 
-			return runTCPTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr)
+			return runTCPTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, region)
 		},
 	}
 
@@ -188,6 +190,7 @@ func tcpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&authtoken, "authtoken", "", "Account authtoken")
 	cmd.Flags().StringVar(&apiURL, "api", "", "Control plane API URL")
 	cmd.Flags().StringVar(&relayURL, "relay", "", "Relay control websocket URL")
+	cmd.Flags().StringVar(&region, "region", "us", "Edge region preference (us/eu/ap)")
 	_ = cmd.MarkFlagRequired("tunnel-id")
 
 	return cmd
@@ -223,12 +226,20 @@ func startCmd() *cobra.Command {
 					defer wg.Done()
 					switch strings.ToLower(tunnel.Protocol) {
 					case "http", "https":
-						err := runHTTPOrHTTPSAgentTunnel(cfg.APIBaseURL, cfg.RelayControlURL, cfg.Authtoken, tunnel.TunnelID, tunnel.LocalAddr, tunnel.Protocol, "")
+						region := tunnel.Region
+						if region == "" {
+							region = "us"
+						}
+						err := runHTTPOrHTTPSAgentTunnel(cfg.APIBaseURL, cfg.RelayControlURL, cfg.Authtoken, tunnel.TunnelID, tunnel.LocalAddr, tunnel.Protocol, "", region)
 						if err != nil {
 							errCh <- fmt.Errorf("tunnel %s failed: %w", tunnel.Name, err)
 						}
 					case "tcp":
-						err := runTCPTunnel(cfg.APIBaseURL, cfg.RelayControlURL, cfg.Authtoken, tunnel.TunnelID, tunnel.LocalAddr)
+						region := tunnel.Region
+						if region == "" {
+							region = "us"
+						}
+						err := runTCPTunnel(cfg.APIBaseURL, cfg.RelayControlURL, cfg.Authtoken, tunnel.TunnelID, tunnel.LocalAddr, region)
 						if err != nil {
 							errCh <- fmt.Errorf("tunnel %s failed: %w", tunnel.Name, err)
 						}
@@ -303,7 +314,12 @@ func inspectCmd() *cobra.Command {
 	return cmd
 }
 
-func runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, protocol, requestedSubdomain string) error {
+func runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, protocol, requestedSubdomain, region string) error {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if region == "" {
+		region = "us"
+	}
+
 	exchange, err := exchangeAgentToken(apiURL, authtoken, tunnelID)
 	if err != nil {
 		return err
@@ -331,7 +347,7 @@ func runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr,
 		Protocol:           protocol,
 		LocalAddr:          localAddr,
 		RequestedSubdomain: requestedSubdomain,
-		Region:             "us",
+		Region:             region,
 		Inspect:            true,
 	}
 	if err := conn.WriteJSON(openReq); err != nil {
@@ -365,7 +381,12 @@ func runHTTPOrHTTPSAgentTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr,
 	}
 }
 
-func runTCPTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr string) error {
+func runTCPTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr, region string) error {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if region == "" {
+		region = "us"
+	}
+
 	exchange, err := exchangeAgentToken(apiURL, authtoken, tunnelID)
 	if err != nil {
 		return err
@@ -387,7 +408,13 @@ func runTCPTunnel(apiURL, relayURL, authtoken, tunnelID, localAddr string) error
 		return err
 	}
 
-	openReq := proto.TunnelOpenRequest{Type: "tunnel.open", Protocol: "tcp", LocalAddr: localAddr, Region: "us", Inspect: false}
+	openReq := proto.TunnelOpenRequest{
+		Type:     "tunnel.open",
+		Protocol: "tcp",
+		LocalAddr: localAddr,
+		Region: region,
+		Inspect:  false,
+	}
 	if err := conn.WriteJSON(openReq); err != nil {
 		return err
 	}

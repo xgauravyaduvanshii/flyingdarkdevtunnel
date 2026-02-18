@@ -15,6 +15,9 @@ type DomainRow = {
   tls_last_checked_at: string | null;
   tls_not_after: string | null;
   tls_last_error: string | null;
+  cert_failure_policy: "standard" | "strict" | "hold";
+  cert_failure_count: number;
+  cert_next_retry_at: string | null;
 };
 
 type TunnelRow = {
@@ -29,6 +32,7 @@ export default function DomainsPage() {
   const [rows, setRows] = useState<DomainRow[]>([]);
   const [tunnels, setTunnels] = useState<TunnelRow[]>([]);
   const [routeTunnelId, setRouteTunnelId] = useState<Record<string, string>>({});
+  const [policyByDomainId, setPolicyByDomainId] = useState<Record<string, DomainRow["cert_failure_policy"]>>({});
   const [message, setMessage] = useState("");
 
   async function load() {
@@ -39,6 +43,12 @@ export default function DomainsPage() {
       ]);
       setRows(domainsRes.domains);
       setTunnels(tunnelsRes.tunnels);
+      setPolicyByDomainId(
+        Object.fromEntries(domainsRes.domains.map((row) => [row.id, row.cert_failure_policy ?? "standard"])) as Record<
+          string,
+          DomainRow["cert_failure_policy"]
+        >,
+      );
     } catch (error) {
       setMessage(`Load failed: ${String(error)}`);
     }
@@ -93,6 +103,16 @@ export default function DomainsPage() {
     await load();
   }
 
+  async function updateFailurePolicy(id: string) {
+    const policy = policyByDomainId[id] ?? "standard";
+    await api(`/v1/domains/custom/${id}/failure-policy`, {
+      method: "PATCH",
+      body: JSON.stringify({ policy }),
+    });
+    setMessage(`Failure policy updated: ${policy}`);
+    await load();
+  }
+
   return (
     <div className="grid cols-2">
       <section className="card">
@@ -122,7 +142,9 @@ export default function DomainsPage() {
               <th>Domain</th>
               <th>TLS mode</th>
               <th>Status</th>
+              <th>Policy</th>
               <th>Expiry</th>
+              <th>Retries</th>
               <th>Token</th>
               <th>Tunnel</th>
               <th>Actions</th>
@@ -134,7 +156,30 @@ export default function DomainsPage() {
                 <td>{row.domain}</td>
                 <td>{row.tls_mode}</td>
                 <td>{row.verified ? `verified (${row.tls_status})` : "pending"}</td>
+                <td>
+                  <select
+                    value={policyByDomainId[row.id] ?? row.cert_failure_policy}
+                    onChange={(e) =>
+                      setPolicyByDomainId((prev) => ({
+                        ...prev,
+                        [row.id]: e.target.value as DomainRow["cert_failure_policy"],
+                      }))
+                    }
+                  >
+                    <option value="standard">standard</option>
+                    <option value="strict">strict</option>
+                    <option value="hold">hold</option>
+                  </select>
+                </td>
                 <td>{row.tls_not_after ? new Date(row.tls_not_after).toLocaleDateString() : "-"}</td>
+                <td>
+                  {row.cert_failure_count}
+                  {row.cert_next_retry_at ? (
+                    <p className="muted" style={{ marginTop: 4 }}>
+                      next: {new Date(row.cert_next_retry_at).toLocaleString()}
+                    </p>
+                  ) : null}
+                </td>
                 <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{row.verification_token}</td>
                 <td>
                   <select
@@ -153,6 +198,7 @@ export default function DomainsPage() {
                   <button className="button secondary" onClick={() => void verify(row.id)}>Verify</button>
                   <button style={{ marginLeft: 8 }} onClick={() => void routeDomain(row.id)}>Route</button>
                   <button style={{ marginLeft: 8 }} onClick={() => void unrouteDomain(row.id)}>Unroute</button>
+                  <button style={{ marginLeft: 8 }} onClick={() => void updateFailurePolicy(row.id)}>Save policy</button>
                   <button style={{ marginLeft: 8 }} onClick={() => void remove(row.id)}>Delete</button>
                   {row.tls_last_error && (
                     <p className="muted" style={{ marginTop: 8, maxWidth: 260, whiteSpace: "normal" }}>

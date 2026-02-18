@@ -1,4 +1,6 @@
+import crypto from "node:crypto";
 import dotenv from "dotenv";
+import http from "node:http";
 import { Pool } from "pg";
 import Stripe from "stripe";
 import { z } from "zod";
@@ -16,8 +18,21 @@ const envSchema = z.object({
   BILLING_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
   BILLING_WEBHOOK_EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD: z.coerce.number().int().positive().default(10),
+  BILLING_WEBHOOK_SLO_SECONDS: z.coerce.number().positive().default(60),
   BILLING_ALERT_WEBHOOK_URL: z.string().url().optional(),
   BILLING_ALERT_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(600),
+  BILLING_METRICS_PORT: z.coerce.number().int().positive().default(9464),
+  API_BASE_URL: z.string().url().optional(),
+  BILLING_RUNBOOK_SIGNING_SECRET: z.string().optional(),
+  BILLING_RUNBOOK_REPLAY_LIMIT: z.coerce.number().int().positive().default(50),
+  BILLING_RUNBOOK_REPLAY_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(300),
+  BILLING_DUNNING_MAX_STAGE: z.coerce.number().int().positive().default(6),
+  BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL: z.string().url().optional(),
+  BILLING_DUNNING_NOTIFICATION_SECRET: z.string().optional(),
+  BILLING_REPORT_EXPORT_BATCH_SIZE: z.coerce.number().int().positive().default(10),
+  BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(12),
+  BILLING_REPORT_DEFAULT_SINK_URL: z.string().url().optional(),
+  BILLING_REPORT_SIGNING_SECRET: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -28,6 +43,34 @@ const paypalEnabled = Boolean(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET);
 let paypalTokenCache: { token: string; expiresAt: number } | null = null;
 let loggedProviderState = false;
 const lastAlertAtByProvider: Partial<Record<"stripe" | "razorpay" | "paypal", number>> = {};
+const lastRunbookReplayAtByKey = new Map<string, number>();
+let runbookReplayTriggerTotal = 0;
+let runbookReplayTriggerFailureTotal = 0;
+
+type BillingProvider = "stripe" | "razorpay" | "paypal";
+type WebhookHealthSummary = {
+  failed1h: number;
+  failed24h: number;
+  stalePending: number;
+  p95LatencySeconds: number;
+  processed1h: number;
+  sloViolationCount1h: number;
+};
+
+const BILLING_PROVIDERS: BillingProvider[] = ["stripe", "razorpay", "paypal"];
+let webhookMetricsGeneratedAt = Date.now();
+let webhookHealthByProvider: Record<BillingProvider, WebhookHealthSummary> = {
+  stripe: { failed1h: 0, failed24h: 0, stalePending: 0, p95LatencySeconds: 0, processed1h: 0, sloViolationCount1h: 0 },
+  razorpay: {
+    failed1h: 0,
+    failed24h: 0,
+    stalePending: 0,
+    p95LatencySeconds: 0,
+    processed1h: 0,
+    sloViolationCount1h: 0,
+  },
+  paypal: { failed1h: 0, failed24h: 0, stalePending: 0, p95LatencySeconds: 0, processed1h: 0, sloViolationCount1h: 0 },
+};
 
 function paypalBaseUrl(environment: "sandbox" | "live"): string {
   return environment === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
@@ -35,6 +78,130 @@ function paypalBaseUrl(environment: "sandbox" | "live"): string {
 
 function basicAuth(user: string, password: string): string {
   return `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+}
+
+function csvEscape(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function toCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
+  const lines = [headers.map(csvEscape).join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((header) => csvEscape(row[header])).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function hmacSignature(secret: string, timestamp: string, payload: string): string {
+  return crypto.createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
+}
+
+function quantile(values: number[], q: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.ceil(q * sorted.length) - 1;
+  return sorted[Math.max(0, Math.min(index, sorted.length - 1))] ?? 0;
+}
+
+function renderMetrics(): string {
+  const lines = [
+    "# HELP fdt_billing_webhook_failed_events_1h Failed billing webhook events in the last hour.",
+    "# TYPE fdt_billing_webhook_failed_events_1h gauge",
+  ];
+
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(`fdt_billing_webhook_failed_events_1h{provider="${provider}"} ${webhookHealthByProvider[provider].failed1h}`);
+  }
+
+  lines.push("# HELP fdt_billing_webhook_failed_events_24h Failed billing webhook events in the last 24 hours.");
+  lines.push("# TYPE fdt_billing_webhook_failed_events_24h gauge");
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(
+      `fdt_billing_webhook_failed_events_24h{provider="${provider}"} ${webhookHealthByProvider[provider].failed24h}`,
+    );
+  }
+
+  lines.push("# HELP fdt_billing_webhook_stale_pending Stale pending billing webhooks older than 5 minutes.");
+  lines.push("# TYPE fdt_billing_webhook_stale_pending gauge");
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(`fdt_billing_webhook_stale_pending{provider="${provider}"} ${webhookHealthByProvider[provider].stalePending}`);
+  }
+
+  lines.push("# HELP fdt_billing_webhook_processing_latency_seconds_p95 p95 webhook processing latency over the last hour.");
+  lines.push("# TYPE fdt_billing_webhook_processing_latency_seconds_p95 gauge");
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(
+      `fdt_billing_webhook_processing_latency_seconds_p95{provider="${provider}"} ${webhookHealthByProvider[provider].p95LatencySeconds.toFixed(3)}`,
+    );
+  }
+
+  lines.push(
+    "# HELP fdt_billing_webhook_slo_violations_1h Number of webhooks in the last hour that breached the processing latency SLO.",
+  );
+  lines.push("# TYPE fdt_billing_webhook_slo_violations_1h gauge");
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(
+      `fdt_billing_webhook_slo_violations_1h{provider="${provider}"} ${webhookHealthByProvider[provider].sloViolationCount1h}`,
+    );
+  }
+
+  lines.push("# HELP fdt_billing_webhook_processed_events_1h Processed billing webhook events in the last hour.");
+  lines.push("# TYPE fdt_billing_webhook_processed_events_1h gauge");
+  for (const provider of BILLING_PROVIDERS) {
+    lines.push(
+      `fdt_billing_webhook_processed_events_1h{provider="${provider}"} ${webhookHealthByProvider[provider].processed1h}`,
+    );
+  }
+
+  lines.push("# HELP fdt_billing_webhook_slo_seconds Billing webhook processing SLO threshold in seconds.");
+  lines.push("# TYPE fdt_billing_webhook_slo_seconds gauge");
+  lines.push(`fdt_billing_webhook_slo_seconds ${env.BILLING_WEBHOOK_SLO_SECONDS}`);
+  lines.push("# HELP fdt_billing_runbook_replay_triggers_total Successful automated billing runbook replay triggers.");
+  lines.push("# TYPE fdt_billing_runbook_replay_triggers_total counter");
+  lines.push(`fdt_billing_runbook_replay_triggers_total ${runbookReplayTriggerTotal}`);
+  lines.push("# HELP fdt_billing_runbook_replay_trigger_failures_total Failed billing runbook replay trigger attempts.");
+  lines.push("# TYPE fdt_billing_runbook_replay_trigger_failures_total counter");
+  lines.push(`fdt_billing_runbook_replay_trigger_failures_total ${runbookReplayTriggerFailureTotal}`);
+  lines.push("# HELP fdt_billing_webhook_metrics_generated_at_seconds Last webhook metrics collection timestamp.");
+  lines.push("# TYPE fdt_billing_webhook_metrics_generated_at_seconds gauge");
+  lines.push(`fdt_billing_webhook_metrics_generated_at_seconds ${Math.floor(webhookMetricsGeneratedAt / 1000)}`);
+
+  return `${lines.join("\n")}\n`;
+}
+
+function startMetricsServer(): void {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/metrics") {
+      res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });
+      res.end(renderMetrics());
+      return;
+    }
+
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("not found");
+  });
+
+  server.listen(env.BILLING_METRICS_PORT, "0.0.0.0", () => {
+    console.log(`[worker-billing] metrics server listening on :${env.BILLING_METRICS_PORT}`);
+  });
+}
+
+function dunningDelaySeconds(stage: number): number {
+  if (stage <= 1) return 15 * 60;
+  if (stage === 2) return 60 * 60;
+  if (stage === 3) return 6 * 60 * 60;
+  if (stage === 4) return 24 * 60 * 60;
+  return 48 * 60 * 60;
 }
 
 async function applyEntitlementsFromPlan(orgId: string, planId: string): Promise<void> {
@@ -59,7 +226,7 @@ async function applyEntitlementsFromPlan(orgId: string, planId: string): Promise
 
 async function updateSubscription(input: {
   orgId: string;
-  provider: "stripe" | "razorpay" | "paypal";
+  provider: BillingProvider;
   status: string;
   planId: string | null;
   stripeSubscriptionId?: string | null;
@@ -91,10 +258,7 @@ async function updateSubscription(input: {
   );
 }
 
-async function findPlanIdByExternalRef(
-  provider: "stripe" | "razorpay" | "paypal",
-  externalRef: string,
-): Promise<string | null> {
+async function findPlanIdByExternalRef(provider: BillingProvider, externalRef: string): Promise<string | null> {
   const column =
     provider === "stripe" ? "stripe_price_id" : provider === "razorpay" ? "razorpay_plan_id" : "paypal_plan_id";
   const plan = await db.query<{ id: string }>(`SELECT id FROM plans WHERE ${column} = $1 LIMIT 1`, [externalRef]);
@@ -169,14 +333,10 @@ async function syncSubscriptions(): Promise<void> {
       try {
         const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
         const priceId = stripeSub.items.data[0]?.price.id;
-        if (!priceId) {
-          continue;
-        }
+        if (!priceId) continue;
 
         const planId = await findPlanIdByExternalRef("stripe", priceId);
-        if (!planId) {
-          continue;
-        }
+        if (!planId) continue;
 
         await updateSubscription({
           orgId: sub.org_id,
@@ -195,13 +355,10 @@ async function syncSubscriptions(): Promise<void> {
       try {
         const razorpayKeyId = env.RAZORPAY_KEY_ID;
         const razorpaySecret = env.RAZORPAY_KEY_SECRET;
-        if (!razorpayKeyId || !razorpaySecret) {
-          continue;
-        }
+        if (!razorpayKeyId || !razorpaySecret) continue;
+
         const response = await fetch(`https://api.razorpay.com/v1/subscriptions/${sub.razorpay_subscription_id}`, {
-          headers: {
-            authorization: basicAuth(razorpayKeyId, razorpaySecret),
-          },
+          headers: { authorization: basicAuth(razorpayKeyId, razorpaySecret) },
         });
         if (!response.ok) {
           console.error("[worker-billing] razorpay sync status", sub.org_id, response.status);
@@ -209,9 +366,7 @@ async function syncSubscriptions(): Promise<void> {
         }
 
         const payload = (await response.json()) as { id?: string; status?: string; plan_id?: string };
-        if (!payload.id || !payload.plan_id || !payload.status) {
-          continue;
-        }
+        if (!payload.id || !payload.plan_id || !payload.status) continue;
 
         const planId = await findPlanIdByExternalRef("razorpay", payload.plan_id);
         await updateSubscription({
@@ -234,9 +389,7 @@ async function syncSubscriptions(): Promise<void> {
         const token = await getPaypalToken();
         const response = await fetch(
           `${paypalBaseUrl(env.PAYPAL_ENVIRONMENT)}/v1/billing/subscriptions/${sub.paypal_subscription_id}`,
-          {
-            headers: { authorization: `Bearer ${token}` },
-          },
+          { headers: { authorization: `Bearer ${token}` } },
         );
         if (!response.ok) {
           console.error("[worker-billing] paypal sync status", sub.org_id, response.status);
@@ -244,9 +397,7 @@ async function syncSubscriptions(): Promise<void> {
         }
 
         const payload = (await response.json()) as { id?: string; status?: string; plan_id?: string };
-        if (!payload.id || !payload.status) {
-          continue;
-        }
+        if (!payload.id || !payload.status) continue;
 
         const planId = payload.plan_id ? await findPlanIdByExternalRef("paypal", payload.plan_id) : null;
         await updateSubscription({
@@ -282,9 +433,71 @@ async function cleanupWebhookEvents(): Promise<void> {
   }
 }
 
-async function reportWebhookHealth(): Promise<void> {
-  const stats = await db.query<{
-    provider: "stripe" | "razorpay" | "paypal";
+async function triggerRunbookReplay(provider: BillingProvider, eventClass: "payment" | "subscription"): Promise<void> {
+  if (!env.API_BASE_URL || !env.BILLING_RUNBOOK_SIGNING_SECRET) return;
+
+  const cooldownKey = `${provider}:${eventClass}`;
+  const now = Date.now();
+  const last = lastRunbookReplayAtByKey.get(cooldownKey) ?? 0;
+  if (now - last < env.BILLING_RUNBOOK_REPLAY_COOLDOWN_SECONDS * 1000) {
+    return;
+  }
+
+  const payload = JSON.stringify({
+    provider,
+    eventClass,
+    limit: env.BILLING_RUNBOOK_REPLAY_LIMIT,
+    force: false,
+  });
+  const timestamp = `${Math.floor(Date.now() / 1000)}`;
+  const signature = hmacSignature(env.BILLING_RUNBOOK_SIGNING_SECRET, timestamp, payload);
+  const response = await fetch(`${env.API_BASE_URL.replace(/\/+$/, "")}/v1/billing/runbook/replay`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-fdt-runbook-timestamp": timestamp,
+      "x-fdt-runbook-signature": signature,
+    },
+    body: payload,
+  });
+
+  if (!response.ok) {
+    throw new Error(`runbook replay failed with status ${response.status}`);
+  }
+  runbookReplayTriggerTotal += 1;
+  lastRunbookReplayAtByKey.set(cooldownKey, now);
+}
+
+async function collectWebhookHealthSummary(): Promise<Record<BillingProvider, WebhookHealthSummary>> {
+  const summary: Record<BillingProvider, WebhookHealthSummary> = {
+    stripe: {
+      failed1h: 0,
+      failed24h: 0,
+      stalePending: 0,
+      p95LatencySeconds: 0,
+      processed1h: 0,
+      sloViolationCount1h: 0,
+    },
+    razorpay: {
+      failed1h: 0,
+      failed24h: 0,
+      stalePending: 0,
+      p95LatencySeconds: 0,
+      processed1h: 0,
+      sloViolationCount1h: 0,
+    },
+    paypal: {
+      failed1h: 0,
+      failed24h: 0,
+      stalePending: 0,
+      p95LatencySeconds: 0,
+      processed1h: 0,
+      sloViolationCount1h: 0,
+    },
+  };
+
+  const countRows = await db.query<{
+    provider: BillingProvider;
     failed_1h: string;
     failed_24h: string;
     stale_pending: string;
@@ -300,24 +513,73 @@ async function reportWebhookHealth(): Promise<void> {
     `,
   );
 
-  for (const row of stats.rows) {
-    const failed1h = Number.parseInt(row.failed_1h, 10) || 0;
-    const failed24h = Number.parseInt(row.failed_24h, 10) || 0;
-    const stalePending = Number.parseInt(row.stale_pending, 10) || 0;
+  for (const row of countRows.rows) {
+    summary[row.provider].failed1h = Number.parseInt(row.failed_1h, 10) || 0;
+    summary[row.provider].failed24h = Number.parseInt(row.failed_24h, 10) || 0;
+    summary[row.provider].stalePending = Number.parseInt(row.stale_pending, 10) || 0;
+  }
 
-    if (failed1h < env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD && stalePending === 0) {
+  const latencyRows = await db.query<{ provider: BillingProvider; latency_seconds: number }>(
+    `
+      SELECT
+        provider,
+        GREATEST(0, EXTRACT(EPOCH FROM (processed_at - received_at)))::float8 AS latency_seconds
+      FROM billing_webhook_events
+      WHERE processed_at IS NOT NULL
+        AND received_at > NOW() - INTERVAL '1 hour'
+    `,
+  );
+
+  const latencyByProvider: Record<BillingProvider, number[]> = { stripe: [], razorpay: [], paypal: [] };
+  for (const row of latencyRows.rows) {
+    if (!Number.isFinite(row.latency_seconds)) {
+      continue;
+    }
+    latencyByProvider[row.provider].push(row.latency_seconds);
+  }
+
+  for (const provider of BILLING_PROVIDERS) {
+    const values = latencyByProvider[provider];
+    summary[provider].processed1h = values.length;
+    summary[provider].p95LatencySeconds = quantile(values, 0.95);
+    summary[provider].sloViolationCount1h = values.reduce(
+      (count, value) => count + (value > env.BILLING_WEBHOOK_SLO_SECONDS ? 1 : 0),
+      0,
+    );
+  }
+
+  return summary;
+}
+
+async function reportWebhookHealth(): Promise<void> {
+  webhookHealthByProvider = await collectWebhookHealthSummary();
+  webhookMetricsGeneratedAt = Date.now();
+
+  for (const provider of BILLING_PROVIDERS) {
+    const summary = webhookHealthByProvider[provider];
+    const hasFailureSignal = summary.failed1h >= env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD || summary.stalePending > 0;
+    const hasSloSignal = summary.processed1h > 0 && summary.p95LatencySeconds > env.BILLING_WEBHOOK_SLO_SECONDS;
+    if (!hasFailureSignal && !hasSloSignal) {
       continue;
     }
 
-    const alertMessage = `[worker-billing] webhook health warning provider=${row.provider} failed_1h=${failed1h} failed_24h=${failed24h} stale_pending=${stalePending}`;
+    const alertMessage = `[worker-billing] webhook health warning provider=${provider} failed_1h=${summary.failed1h} failed_24h=${summary.failed24h} stale_pending=${summary.stalePending} p95_latency_s=${summary.p95LatencySeconds.toFixed(3)} slo_seconds=${env.BILLING_WEBHOOK_SLO_SECONDS}`;
     console.warn(alertMessage);
 
-    if (!env.BILLING_ALERT_WEBHOOK_URL) {
-      continue;
+    try {
+      await triggerRunbookReplay(provider, "payment");
+      if (summary.stalePending > 0 || hasSloSignal) {
+        await triggerRunbookReplay(provider, "subscription");
+      }
+    } catch (error) {
+      runbookReplayTriggerFailureTotal += 1;
+      console.error("[worker-billing] runbook replay trigger failed", provider, error);
     }
 
+    if (!env.BILLING_ALERT_WEBHOOK_URL) continue;
+
     const now = Date.now();
-    const last = lastAlertAtByProvider[row.provider] ?? 0;
+    const last = lastAlertAtByProvider[provider] ?? 0;
     if (now - last < env.BILLING_ALERT_COOLDOWN_SECONDS * 1000) {
       continue;
     }
@@ -329,29 +591,417 @@ async function reportWebhookHealth(): Promise<void> {
         body: JSON.stringify({
           source: "worker-billing",
           severity: "warning",
-          provider: row.provider,
-          failed1h,
-          failed24h,
-          stalePending,
+          provider,
+          failed1h: summary.failed1h,
+          failed24h: summary.failed24h,
+          stalePending: summary.stalePending,
+          processed1h: summary.processed1h,
+          p95LatencySeconds: summary.p95LatencySeconds,
+          sloViolationCount1h: summary.sloViolationCount1h,
           threshold: env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD,
+          sloThresholdSeconds: env.BILLING_WEBHOOK_SLO_SECONDS,
           timestamp: new Date().toISOString(),
         }),
       });
-      lastAlertAtByProvider[row.provider] = now;
+      lastAlertAtByProvider[provider] = now;
     } catch (error) {
       console.error("[worker-billing] alert webhook delivery failed", error);
     }
   }
 }
 
+async function processDunningCases(): Promise<void> {
+  const dueCases = await db.query<{
+    id: string;
+    org_id: string;
+    provider: BillingProvider;
+    subscription_ref: string;
+    status: "open" | "recovered" | "closed";
+    stage: number;
+    retry_count: number;
+    notification_count: number;
+  }>(
+    `
+      SELECT
+        id,
+        org_id,
+        provider,
+        subscription_ref,
+        status,
+        stage,
+        retry_count,
+        notification_count
+      FROM billing_dunning_cases
+      WHERE status = 'open'
+        AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+      ORDER BY next_attempt_at ASC NULLS FIRST, updated_at ASC
+      LIMIT 200
+    `,
+  );
+
+  for (const row of dueCases.rows) {
+    if (row.stage >= env.BILLING_DUNNING_MAX_STAGE) {
+      await db.query(
+        `
+          UPDATE billing_dunning_cases
+          SET
+            status = 'closed',
+            next_attempt_at = NULL,
+            last_attempt_at = NOW(),
+            last_error = COALESCE(last_error, 'max dunning stage reached'),
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [row.id],
+      );
+      continue;
+    }
+
+    const nextStage = row.stage + 1;
+    const nextRetryAt = new Date(Date.now() + dunningDelaySeconds(nextStage) * 1000);
+    let deliveryError: string | null = null;
+
+    if (env.BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL) {
+      try {
+        const payload = JSON.stringify({
+          source: "worker-billing",
+          type: "dunning.notice",
+          caseId: row.id,
+          orgId: row.org_id,
+          provider: row.provider,
+          subscriptionRef: row.subscription_ref,
+          stage: nextStage,
+          maxStage: env.BILLING_DUNNING_MAX_STAGE,
+          timestamp: new Date().toISOString(),
+        });
+
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (env.BILLING_DUNNING_NOTIFICATION_SECRET) {
+          const ts = `${Math.floor(Date.now() / 1000)}`;
+          headers["x-fdt-timestamp"] = ts;
+          headers["x-fdt-signature"] = hmacSignature(env.BILLING_DUNNING_NOTIFICATION_SECRET, ts, payload);
+        }
+
+        const response = await fetch(env.BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL, {
+          method: "POST",
+          headers,
+          body: payload,
+        });
+        if (!response.ok) {
+          throw new Error(`notification webhook returned ${response.status}`);
+        }
+      } catch (error) {
+        deliveryError = String(error);
+      }
+    }
+
+    await db.query(
+      `
+        UPDATE billing_dunning_cases
+        SET
+          stage = $2,
+          retry_count = retry_count + 1,
+          next_attempt_at = $3,
+          last_attempt_at = NOW(),
+          notification_count = notification_count + $4,
+          last_error = $5,
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [row.id, nextStage, nextRetryAt, deliveryError ? 0 : 1, deliveryError],
+    );
+  }
+}
+
+async function buildReportCsv(dataset: "finance_events" | "invoices" | "dunning", orgId: string | null): Promise<{ csv: string; rowCount: number }> {
+  if (dataset === "finance_events") {
+    const rows = await db.query(
+      `
+        SELECT
+          id,
+          org_id,
+          provider,
+          event_type,
+          status,
+          external_id,
+          external_ref,
+          amount_cents,
+          currency,
+          reason,
+          error,
+          created_at,
+          updated_at
+        FROM billing_finance_events
+        WHERE ($1::uuid IS NULL OR org_id = $1)
+        ORDER BY created_at DESC
+        LIMIT 10000
+      `,
+      [orgId],
+    );
+    return {
+      csv: toCsv(
+        [
+          "id",
+          "org_id",
+          "provider",
+          "event_type",
+          "status",
+          "external_id",
+          "external_ref",
+          "amount_cents",
+          "currency",
+          "reason",
+          "error",
+          "created_at",
+          "updated_at",
+        ],
+        rows.rows as Array<Record<string, unknown>>,
+      ),
+      rowCount: rows.rows.length,
+    };
+  }
+
+  if (dataset === "invoices") {
+    const rows = await db.query(
+      `
+        SELECT
+          id,
+          org_id,
+          provider,
+          provider_invoice_id,
+          provider_subscription_id,
+          provider_payment_id,
+          status,
+          currency,
+          subtotal_cents,
+          tax_cents,
+          total_cents,
+          amount_due_cents,
+          amount_paid_cents,
+          invoice_url,
+          period_start,
+          period_end,
+          issued_at,
+          due_at,
+          paid_at,
+          created_at,
+          updated_at
+        FROM billing_invoices
+        WHERE ($1::uuid IS NULL OR org_id = $1)
+        ORDER BY created_at DESC
+        LIMIT 10000
+      `,
+      [orgId],
+    );
+    return {
+      csv: toCsv(
+        [
+          "id",
+          "org_id",
+          "provider",
+          "provider_invoice_id",
+          "provider_subscription_id",
+          "provider_payment_id",
+          "status",
+          "currency",
+          "subtotal_cents",
+          "tax_cents",
+          "total_cents",
+          "amount_due_cents",
+          "amount_paid_cents",
+          "invoice_url",
+          "period_start",
+          "period_end",
+          "issued_at",
+          "due_at",
+          "paid_at",
+          "created_at",
+          "updated_at",
+        ],
+        rows.rows as Array<Record<string, unknown>>,
+      ),
+      rowCount: rows.rows.length,
+    };
+  }
+
+  const rows = await db.query(
+    `
+      SELECT
+        id,
+        org_id,
+        provider,
+        subscription_ref,
+        status,
+        stage,
+        retry_count,
+        next_attempt_at,
+        last_attempt_at,
+        notification_count,
+        last_error,
+        latest_event_id,
+        latest_event_type,
+        created_at,
+        updated_at
+      FROM billing_dunning_cases
+      WHERE ($1::uuid IS NULL OR org_id = $1)
+      ORDER BY updated_at DESC
+      LIMIT 10000
+    `,
+    [orgId],
+  );
+  return {
+    csv: toCsv(
+      [
+        "id",
+        "org_id",
+        "provider",
+        "subscription_ref",
+        "status",
+        "stage",
+        "retry_count",
+        "next_attempt_at",
+        "last_attempt_at",
+        "notification_count",
+        "last_error",
+        "latest_event_id",
+        "latest_event_type",
+        "created_at",
+        "updated_at",
+      ],
+      rows.rows as Array<Record<string, unknown>>,
+    ),
+    rowCount: rows.rows.length,
+  };
+}
+
+async function processReportExports(): Promise<void> {
+  const jobs = await db.query<{
+    id: string;
+    org_id: string | null;
+    dataset: "finance_events" | "invoices" | "dunning";
+    destination: "inline" | "webhook";
+    sink_url: string | null;
+  }>(
+    `
+      SELECT id, org_id, dataset, destination, sink_url
+      FROM billing_report_exports
+      WHERE status = 'pending'
+        AND scheduled_for <= NOW()
+      ORDER BY scheduled_for ASC, created_at ASC
+      LIMIT $1
+    `,
+    [env.BILLING_REPORT_EXPORT_BATCH_SIZE],
+  );
+
+  for (const job of jobs.rows) {
+    await db.query(
+      `
+        UPDATE billing_report_exports
+        SET status = 'running', started_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+      `,
+      [job.id],
+    );
+
+    try {
+      const report = await buildReportCsv(job.dataset, job.org_id ?? null);
+      const contentHash = crypto.createHash("sha256").update(report.csv).digest("hex");
+
+      if (job.destination === "webhook") {
+        const sinkUrl = job.sink_url ?? env.BILLING_REPORT_DEFAULT_SINK_URL;
+        if (!sinkUrl) {
+          throw new Error("report export destination webhook requires sink URL");
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), env.BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS * 1000);
+        const headers: Record<string, string> = {
+          "content-type": "text/csv; charset=utf-8",
+          "x-fdt-report-id": job.id,
+          "x-fdt-report-dataset": job.dataset,
+        };
+        if (env.BILLING_REPORT_SIGNING_SECRET) {
+          const ts = `${Math.floor(Date.now() / 1000)}`;
+          headers["x-fdt-timestamp"] = ts;
+          headers["x-fdt-signature"] = hmacSignature(env.BILLING_REPORT_SIGNING_SECRET, ts, report.csv);
+        }
+
+        try {
+          const response = await fetch(sinkUrl, {
+            method: "POST",
+            headers,
+            body: report.csv,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error(`report sink responded with status ${response.status}`);
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        await db.query(
+          `
+            UPDATE billing_report_exports
+            SET
+              status = 'completed',
+              completed_at = NOW(),
+              row_count = $2,
+              content_hash = $3,
+              content_text = NULL,
+              error = NULL,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [job.id, report.rowCount, contentHash],
+        );
+      } else {
+        await db.query(
+          `
+            UPDATE billing_report_exports
+            SET
+              status = 'completed',
+              completed_at = NOW(),
+              row_count = $2,
+              content_hash = $3,
+              content_text = $4,
+              error = NULL,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [job.id, report.rowCount, contentHash, report.csv],
+        );
+      }
+    } catch (error) {
+      await db.query(
+        `
+          UPDATE billing_report_exports
+          SET status = 'failed', completed_at = NOW(), error = $2, updated_at = NOW()
+          WHERE id = $1
+        `,
+        [job.id, String(error)],
+      );
+    }
+  }
+}
+
 async function loop(): Promise<void> {
   while (true) {
-    await syncSubscriptions();
-    await cleanupWebhookEvents();
-    await reportWebhookHealth();
+    try {
+      await syncSubscriptions();
+      await cleanupWebhookEvents();
+      await reportWebhookHealth();
+      await processDunningCases();
+      await processReportExports();
+    } catch (error) {
+      console.error("[worker-billing] loop error", error);
+    }
+
     await new Promise((resolve) => setTimeout(resolve, env.BILLING_SYNC_INTERVAL_SECONDS * 1000));
   }
 }
+
+startMetricsServer();
 
 loop().catch((error) => {
   console.error("[worker-billing] fatal", error);

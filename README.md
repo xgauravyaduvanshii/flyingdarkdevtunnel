@@ -6,7 +6,7 @@ Implemented stack:
 - Control plane API: Fastify + PostgreSQL + JWT + Stripe webhook support
 - Data plane: Go relay + Go agent CLI with HTTP tunnel forwarding and TCP stream multiplexing
 - Product UI: Next.js user/admin console + docs site
-- Workers: billing sync + inspection retention/replay queue processor + certificate lifecycle sync
+- Workers: billing sync/dunning/report export + inspection retention/replay queue processor + certificate lifecycle sync
 - Infra: Docker Compose (Postgres/Redis/MinIO/services), Cloudflare DNS script, Prometheus config
 
 ## Monorepo layout
@@ -16,7 +16,7 @@ Implemented stack:
 - `services/api`: control plane API (`/v1/auth`, `/v1/tunnels`, `/v1/requests`, `/v1/domains`, `/v1/billing`, `/v1/admin`, `/v1/agent`)
 - `services/worker-billing`: Stripe/Razorpay/PayPal subscription -> entitlement sync loop
 - `services/worker-inspector`: replay queue + retention cleanup loop
-- `services/worker-certificates`: custom-domain TLS probe and lifecycle status sync loop
+- `services/worker-certificates`: cert event apply/retry loop + TLS probe fallback lifecycle sync
 - `go/relay`: edge relay (public HTTP + control websocket + TCP listeners)
 - `go/agent`: CLI (`login`, `http`, `tcp`, `start`, `tunnels ls`, `inspect`)
 - `go/proto`: shared control/data frame types
@@ -106,8 +106,10 @@ bash scripts/integration-smoke.sh
 - `POST /v1/billing/subscription/cancel` supports immediate cancel or period-end cancel.
 - `POST /v1/billing/refund` issues provider-aware refunds (or mock fallback in local/dev).
 - `GET /v1/billing/finance-events` returns org-scoped finance operation history.
+- `GET /v1/billing/dunning` returns org-scoped failed-payment recovery cases.
 - `GET /v1/billing/invoices` returns org invoice + optional tax records.
 - `GET /v1/billing/invoices/export` downloads invoice CSV export.
+- `POST /v1/billing/runbook/replay` accepts signed runbook replay triggers for failed webhook replay automation.
 - Webhooks:
   - `POST /v1/billing/webhook/stripe` (legacy alias: `/v1/billing/webhook`)
   - `POST /v1/billing/webhook/razorpay`
@@ -120,9 +122,29 @@ bash scripts/integration-smoke.sh
   - `POST /v1/admin/billing-webhooks/reconcile`
 - Admin finance ops endpoint:
   - `GET /v1/admin/billing-finance-events`
+- Admin dunning/report ops endpoints:
+  - `GET /v1/admin/billing-dunning`
+  - `POST /v1/admin/billing-reports/exports`
+  - `GET /v1/admin/billing-reports/exports`
 - Admin invoice ops endpoints:
   - `GET /v1/admin/billing-invoices`
   - `GET /v1/admin/billing-invoices/export`
+
+## Team, SSO, and security controls
+
+- Team RBAC management:
+  - `GET /v1/admin/members`
+  - `POST /v1/admin/members`
+  - `PATCH /v1/admin/members/:userId/role`
+  - `DELETE /v1/admin/members/:userId`
+- SSO scaffold:
+  - `GET /v1/admin/sso`
+  - `PUT /v1/admin/sso`
+- Immutable audit chain and integrity check:
+  - `GET /v1/admin/audit`
+  - `GET /v1/admin/audit/integrity`
+- Token revoke list:
+  - `POST /v1/auth/token/revoke`
 
 ## Certificate worker alerts
 

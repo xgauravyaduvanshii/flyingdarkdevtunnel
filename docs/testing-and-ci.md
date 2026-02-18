@@ -42,3 +42,11 @@
 - Jobs:
   1. `quality`: lint, typecheck, unit tests, build, go test/build.
   2. `integration`: uses ephemeral Postgres/Redis service containers and runs API integration + smoke script.
+
+## Monitoring validation
+- Prometheus config:
+  - `infra/monitoring/prometheus.yml`
+  - `infra/monitoring/alert-rules.yml`
+- Worker metrics endpoints:
+  - billing: `worker-billing:9464/metrics`
+  - certificates: `worker-certificates:9465/metrics`
