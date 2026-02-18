@@ -14,7 +14,7 @@
     "verify:secret-rotations": "tsx src/scripts/verify-secret-rotations.ts"
   },
   "dependencies": {
-    "@fastify/cors": "^10.0.2",
+    "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fdt/config": "workspace:*",
     "argon2": "^0.41.1",
