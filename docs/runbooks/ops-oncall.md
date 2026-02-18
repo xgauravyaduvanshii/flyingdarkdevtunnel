@@ -85,3 +85,31 @@ This runbook maps Prometheus alert signals to immediate responder actions.
 ### Mitigation
 1. Increase worker throughput (`CERT_EVENT_BATCH_SIZE`) and reduce loop interval.
 2. Clear poison events by marking failed after root-cause capture.
+
+## Relay overlimit burst
+### Alert
+- `RelayOverlimitRejectionsBurst`
+
+### First checks
+1. Inspect relay metrics:
+   - `fdt_relay_inflight_http_requests`
+   - `fdt_relay_active_tcp_streams`
+   - `fdt_relay_http_overlimit_rejections_total`
+   - `fdt_relay_tcp_overlimit_rejections_total`
+2. Correlate with plan concurrency settings for impacted orgs.
+
+### Mitigation
+1. Scale relay capacity or rebalance to additional relay edges in the same region.
+2. If abuse traffic is suspected, tighten allowlists/rate limits for impacted tunnels.
+
+## Relay inflight high
+### Alert
+- `RelayInflightHigh`
+
+### First checks
+1. Check p95 upstream latency and agent connectivity health.
+2. Validate whether reconnect storm tests or deployments are in progress.
+
+### Mitigation
+1. Increase relay concurrency budget temporarily and observe rejection counters.
+2. Roll back recent edge change if inflight increase correlates with release start.
