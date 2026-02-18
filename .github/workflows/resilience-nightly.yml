@@ -1,0 +1,57 @@
+name: Resilience Nightly
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  relay-resilience:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Start Postgres/Redis for resilience run
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d postgres redis
+
+      - name: Run relay resilience suite
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:55432/fdt
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_SECRET: 12345678901234567890123456789012
+          JWT_REFRESH_SECRET: 12345678901234567890123456789012
+          AGENT_JWT_SECRET: 12345678901234567890123456789012
+          BASE_DOMAIN: tunnel.yourdomain.com
+          BASELINE_REQUESTS: 300
+          BASELINE_CONCURRENCY: 20
+          BASELINE_MAX_FAILURE_RATE: 0.08
+          BASELINE_MAX_P95_MS: 6000
+          BACKPRESSURE_REQUESTS: 1200
+          BACKPRESSURE_CONCURRENCY: 160
+          STORM_REQUESTS: 1800
+          STORM_CONCURRENCY: 70
+        run: bash scripts/relay-resilience.sh
+
+      - name: Upload resilience logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-resilience-logs
+          path: .data/resilience-logs
