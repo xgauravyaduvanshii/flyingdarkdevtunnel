@@ -2,6 +2,15 @@
   "name": "flyingdarkdevtunnel",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel/issues"
+  },
+  "homepage": "https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel#readme",
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "dev": "turbo run dev --parallel",
