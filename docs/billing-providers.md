@@ -36,6 +36,9 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - Replay/idempotency protection is backed by `billing_webhook_events` with unique `(provider, event_id)`.
 - Duplicate event deliveries return success and do not re-apply entitlements.
 - `BILLING_WEBHOOK_MAX_AGE_SECONDS` enforces max age for signed webhook events.
+- Worker cleanup/ops:
+  - `services/worker-billing` prunes old webhook events by retention policy.
+  - worker emits warning logs when failed/stale pending events cross thresholds.
 
 ## DB mapping
 - `plans`:
@@ -58,3 +61,11 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - PayPal: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_ENVIRONMENT`
 - Optional return URLs: `BILLING_SUCCESS_URL`, `BILLING_CANCEL_URL`
 - Webhook replay window: `BILLING_WEBHOOK_MAX_AGE_SECONDS`
+- Event retention days: `BILLING_WEBHOOK_EVENT_RETENTION_DAYS`
+- Warning threshold: `BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD`
+
+## Admin operations
+- Admin API:
+  - `GET /v1/admin/billing-webhooks?provider=&status=&limit=`
+- Admin UI:
+  - `apps/console-web/app/admin/billing-webhooks/page.tsx`
