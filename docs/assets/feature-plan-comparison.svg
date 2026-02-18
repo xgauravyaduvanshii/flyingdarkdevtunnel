@@ -1,0 +1,45 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Feature and plan comparison">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Feature and Plan Comparison</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Clear separation between free developer experience and paid production controls.</text>
+
+  <rect x="80" y="130" width="360" height="540" rx="20" fill="#0EA5E9"/>
+  <text x="112" y="176" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Free</text>
+  <text x="112" y="208" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="16">For local testing and quick demos</text>
+  <text x="112" y="254" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Random public URLs</text>
+  <text x="112" y="282" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Basic request inspection</text>
+  <text x="112" y="310" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Limited tunnel concurrency</text>
+  <text x="112" y="338" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Ephemeral sessions</text>
+  <text x="112" y="366" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Community support baseline</text>
+
+  <rect x="470" y="130" width="360" height="540" rx="20" fill="#22C55E"/>
+  <text x="502" y="176" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Pro</text>
+  <text x="502" y="208" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="16">For teams shipping production workflows</text>
+  <text x="502" y="254" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Reserved subdomains and hostnames</text>
+  <text x="502" y="282" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Custom domains with TLS controls</text>
+  <text x="502" y="310" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Higher connection limits</text>
+  <text x="502" y="338" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">- IP allowlist and policy options</text>
+  <text x="502" y="366" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Extended retention and metrics</text>
+
+  <rect x="860" y="130" width="360" height="540" rx="20" fill="#F97316"/>
+  <text x="892" y="176" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Enterprise</text>
+  <text x="892" y="208" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="16">For regulated orgs and scale operations</text>
+  <text x="892" y="254" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Team/org governance and RBAC depth</text>
+  <text x="892" y="282" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">- SSO and policy automation</text>
+  <text x="892" y="310" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Audit-grade operation workflows</text>
+  <text x="892" y="338" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Multi-region traffic controls</text>
+  <text x="892" y="366" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">- SLA and escalation tooling</text>
+
+  <rect x="112" y="444" width="1076" height="178" rx="16" fill="#0F172A"/>
+  <text x="146" y="488" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Policy Rule</text>
+  <text x="146" y="520" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Plan limits are enforced in both API and relay paths to avoid control/data-plane drift.</text>
+  <text x="146" y="548" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Entitlement updates propagate through webhook workers and state sync loops with replay safety.</text>
+  <text x="146" y="576" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Downgrade/upgrade actions are observable and auditable through admin operations trails.</text>
+</svg>

@@ -1,0 +1,40 @@
+<svg width="1300" height="700" viewBox="0 0 1300 700" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Roadmap flight path">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="700" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Roadmap Flight Path</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">MVP foundations to enterprise-grade controls with staged capability depth.</text>
+
+  <path d="M100 540 C 260 460, 320 280, 520 280 C 720 280, 760 470, 940 470 C 1060 470, 1140 380, 1220 220" stroke="#334155" stroke-width="6" fill="none" stroke-linecap="round"/>
+
+  <circle cx="220" cy="470" r="62" fill="#0EA5E9"/>
+  <text x="188" y="478" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">P1</text>
+  <rect x="132" y="550" width="176" height="96" rx="12" fill="#E0F2FE"/>
+  <text x="152" y="586" fill="#075985" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">MVP Launch</text>
+  <text x="152" y="610" fill="#0C4A6E" font-family="Segoe UI, Arial, sans-serif" font-size="13">Core tunnel + CLI + billing</text>
+
+  <circle cx="560" cy="280" r="62" fill="#22C55E"/>
+  <text x="528" y="288" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">P2</text>
+  <rect x="472" y="98" width="176" height="96" rx="12" fill="#DCFCE7"/>
+  <text x="492" y="134" fill="#14532D" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Scale + Org</text>
+  <text x="492" y="158" fill="#14532D" font-family="Segoe UI, Arial, sans-serif" font-size="13">RBAC, SSO, multi-region</text>
+
+  <circle cx="940" cy="470" r="62" fill="#F97316"/>
+  <text x="908" y="478" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">P3</text>
+  <rect x="852" y="550" width="176" height="96" rx="12" fill="#FFEDD5"/>
+  <text x="872" y="586" fill="#7C2D12" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Advanced</text>
+  <text x="872" y="610" fill="#7C2D12" font-family="Segoe UI, Arial, sans-serif" font-size="13">Optimization + analytics</text>
+
+  <circle cx="1220" cy="220" r="62" fill="#6366F1"/>
+  <text x="1188" y="228" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">P4</text>
+  <rect x="1110" y="98" width="220" height="96" rx="12" fill="#E0E7FF"/>
+  <text x="1132" y="134" fill="#312E81" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Global Reliability</text>
+  <text x="1132" y="158" fill="#312E81" font-family="Segoe UI, Arial, sans-serif" font-size="13">SLO automation and deep policy</text>
+
+  <text x="80" y="668" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="14">This path is reflected in plan.md with shipped, in-progress, and queued workstreams.</text>
+</svg>

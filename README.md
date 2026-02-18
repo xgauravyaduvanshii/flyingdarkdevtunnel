@@ -71,6 +71,8 @@ This project is designed so that each critical behavior has:
 | Reliability Features | retries, dead-letter workflows, replay/reconcile pipelines |
 | Operations | Prometheus, Grafana, alert rules, incident runbooks |
 
+![Feature and Plan Comparison](docs/assets/feature-plan-comparison.svg)
+
 ---
 
 ## Localhost to Internet Journey
@@ -87,6 +89,8 @@ This request journey is built around strict checkpoints:
 - stream forwarding between relay and agent,
 - optional inspection and replay for debugging,
 - metrics and audit artifacts for incident response.
+
+![Inspection and Replay Cycle](docs/assets/inspection-replay-cycle.svg)
 
 ---
 
@@ -191,12 +195,25 @@ See:
 ## Reliability and On-Call Operations
 
 ![Release and Operations Loop](docs/assets/release-ops-loop.svg)
+![Roadmap Flight Path](docs/assets/roadmap-flightpath.svg)
 
 Reliability foundation:
 - Prometheus and alert rules under `infra/monitoring/`,
 - Grafana provisioning and dashboard JSON committed in-repo,
 - integration smoke plus resilience scripts in `scripts/`,
 - runbook-first incident handling for certificate, payment, and security classes.
+
+---
+
+## Deployment Blueprint
+
+![Deployment Blueprint](docs/assets/deployment-blueprint.svg)
+
+The platform can run as a managed SaaS stack on Ubuntu VPS with Docker Compose:
+- edge relay for ingress and policy gates,
+- API and workers for control + async workflows,
+- PostgreSQL/Redis/object storage for persistence layers,
+- monitoring and alerting for on-call visibility.
 
 ---
 
