@@ -12,7 +12,7 @@
     "test": "echo 'no tests'"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
+    "dotenv": "^17.3.1",
     "pg": "^8.13.3",
     "zod": "^3.24.2"
   },
