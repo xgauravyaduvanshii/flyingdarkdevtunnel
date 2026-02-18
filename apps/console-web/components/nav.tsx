@@ -12,6 +12,7 @@ const links = [
   ["/admin/users", "Admin"],
   ["/admin/domains", "Domains Admin"],
   ["/admin/billing-webhooks", "Billing Ops"],
+  ["/admin/billing-finance-events", "Finance Ops"],
 ] as const;
 
 export function TopNav() {
