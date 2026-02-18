@@ -55,7 +55,7 @@ function verifyRevocableToken(
 async function recordSecurityAnomaly(
   app: FastifyInstance,
   input: {
-    category: "auth_failed" | "token_revoked";
+    category: "auth_failed" | "token_revoked" | "abuse_signal";
     severity: "low" | "medium" | "high";
     ip: string | null;
     userId?: string | null;
@@ -80,6 +80,43 @@ async function recordSecurityAnomaly(
       input.details ?? null,
     ],
   );
+}
+
+async function maybeRecordAbuseSignal(
+  app: FastifyInstance,
+  input: {
+    ip: string | null;
+    route: string;
+    reason: string;
+    email?: string;
+  },
+): Promise<void> {
+  if (!input.ip) return;
+
+  const failed = await app.db.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM security_anomaly_events
+      WHERE category = 'auth_failed'
+        AND ip = $1
+        AND created_at >= NOW() - INTERVAL '15 minutes'
+    `,
+    [input.ip],
+  );
+  const failures = Number.parseInt(failed.rows[0]?.count ?? "0", 10);
+  if (failures < 5) return;
+
+  await recordSecurityAnomaly(app, {
+    category: "abuse_signal",
+    severity: failures >= 10 ? "high" : "medium",
+    ip: input.ip,
+    route: input.route,
+    details: {
+      reason: input.reason,
+      authFailures15m: failures,
+      email: input.email ?? null,
+    },
+  });
 }
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -185,6 +222,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         route: "/v1/auth/login",
         details: { reason: "user_not_found", email: body.email },
       });
+      await maybeRecordAbuseSignal(app, {
+        ip: request.ip ?? null,
+        route: "/v1/auth/login",
+        reason: "repeated_login_failure",
+        email: body.email,
+      });
       return reply.code(401).send({ message: "Invalid credentials" });
     }
 
@@ -198,6 +241,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         orgId: row.org_id,
         route: "/v1/auth/login",
         details: { reason: "password_mismatch", email: body.email },
+      });
+      await maybeRecordAbuseSignal(app, {
+        ip: request.ip ?? null,
+        route: "/v1/auth/login",
+        reason: "repeated_login_failure",
+        email: body.email,
       });
       return reply.code(401).send({ message: "Invalid credentials" });
     }

@@ -263,14 +263,6 @@ function startMetricsServer(): void {
   });
 }
 
-function dunningDelaySeconds(stage: number): number {
-  if (stage <= 1) return 15 * 60;
-  if (stage === 2) return 60 * 60;
-  if (stage === 3) return 6 * 60 * 60;
-  if (stage === 4) return 24 * 60 * 60;
-  return 48 * 60 * 60;
-}
-
 async function applyEntitlementsFromPlan(orgId: string, planId: string): Promise<void> {
   await db.query(
     `
@@ -687,6 +679,7 @@ async function processDunningCases(): Promise<void> {
     stage: number;
     retry_count: number;
     notification_count: number;
+    notification_channels: unknown;
   }>(
     `
       SELECT
@@ -697,7 +690,8 @@ async function processDunningCases(): Promise<void> {
         status,
         stage,
         retry_count,
-        notification_count
+        notification_count,
+        notification_channels
       FROM billing_dunning_cases
       WHERE status = 'open'
         AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
@@ -705,6 +699,57 @@ async function processDunningCases(): Promise<void> {
       LIMIT 200
     `,
   );
+
+  async function sendDunningNotification(
+    channel: DunningChannel,
+    row: {
+      id: string;
+      org_id: string;
+      provider: BillingProvider;
+      subscription_ref: string;
+    },
+    stage: number,
+  ): Promise<void> {
+    const url =
+      channel === "webhook"
+        ? env.BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL
+        : channel === "email"
+          ? env.BILLING_DUNNING_EMAIL_WEBHOOK_URL
+          : env.BILLING_DUNNING_SLACK_WEBHOOK_URL;
+
+    if (!url) {
+      throw new Error(`dunning ${channel} channel URL is not configured`);
+    }
+
+    const payload = JSON.stringify({
+      source: "worker-billing",
+      type: "dunning.notice",
+      channel,
+      caseId: row.id,
+      orgId: row.org_id,
+      provider: row.provider,
+      subscriptionRef: row.subscription_ref,
+      stage,
+      maxStage: env.BILLING_DUNNING_MAX_STAGE,
+      timestamp: new Date().toISOString(),
+    });
+
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (env.BILLING_DUNNING_NOTIFICATION_SECRET) {
+      const ts = `${Math.floor(Date.now() / 1000)}`;
+      headers["x-fdt-timestamp"] = ts;
+      headers["x-fdt-signature"] = hmacSignature(env.BILLING_DUNNING_NOTIFICATION_SECRET, ts, payload);
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: payload,
+    });
+    if (!response.ok) {
+      throw new Error(`${channel} notification webhook returned ${response.status}`);
+    }
+  }
 
   for (const row of dueCases.rows) {
     if (row.stage >= env.BILLING_DUNNING_MAX_STAGE) {
@@ -725,42 +770,21 @@ async function processDunningCases(): Promise<void> {
     }
 
     const nextStage = row.stage + 1;
-    const nextRetryAt = new Date(Date.now() + dunningDelaySeconds(nextStage) * 1000);
-    let deliveryError: string | null = null;
+    const nextRetryAt = new Date(Date.now() + dunningDelaySeconds(row.provider, nextStage) * 1000);
+    const channels = parseNotificationChannels(row.notification_channels);
+    const deliveryErrors: string[] = [];
+    let deliveredCount = 0;
 
-    if (env.BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL) {
+    for (const channel of channels) {
       try {
-        const payload = JSON.stringify({
-          source: "worker-billing",
-          type: "dunning.notice",
-          caseId: row.id,
-          orgId: row.org_id,
-          provider: row.provider,
-          subscriptionRef: row.subscription_ref,
-          stage: nextStage,
-          maxStage: env.BILLING_DUNNING_MAX_STAGE,
-          timestamp: new Date().toISOString(),
-        });
-
-        const headers: Record<string, string> = { "content-type": "application/json" };
-        if (env.BILLING_DUNNING_NOTIFICATION_SECRET) {
-          const ts = `${Math.floor(Date.now() / 1000)}`;
-          headers["x-fdt-timestamp"] = ts;
-          headers["x-fdt-signature"] = hmacSignature(env.BILLING_DUNNING_NOTIFICATION_SECRET, ts, payload);
-        }
-
-        const response = await fetch(env.BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL, {
-          method: "POST",
-          headers,
-          body: payload,
-        });
-        if (!response.ok) {
-          throw new Error(`notification webhook returned ${response.status}`);
-        }
+        await sendDunningNotification(channel, row, nextStage);
+        deliveredCount += 1;
       } catch (error) {
-        deliveryError = String(error);
+        deliveryErrors.push(String(error));
       }
     }
+
+    const deliveryError = deliveryErrors.length > 0 ? deliveryErrors.join(" | ") : null;
 
     await db.query(
       `
@@ -775,7 +799,7 @@ async function processDunningCases(): Promise<void> {
           updated_at = NOW()
         WHERE id = $1
       `,
-      [row.id, nextStage, nextRetryAt, deliveryError ? 0 : 1, deliveryError],
+      [row.id, nextStage, nextRetryAt, deliveredCount, deliveryError],
     );
   }
 }
@@ -904,6 +928,7 @@ async function buildReportCsv(dataset: "finance_events" | "invoices" | "dunning"
         next_attempt_at,
         last_attempt_at,
         notification_count,
+        notification_channels,
         last_error,
         latest_event_id,
         latest_event_type,
@@ -929,6 +954,7 @@ async function buildReportCsv(dataset: "finance_events" | "invoices" | "dunning"
         "next_attempt_at",
         "last_attempt_at",
         "notification_count",
+        "notification_channels",
         "last_error",
         "latest_event_id",
         "latest_event_type",
@@ -946,11 +972,12 @@ async function processReportExports(): Promise<void> {
     id: string;
     org_id: string | null;
     dataset: "finance_events" | "invoices" | "dunning";
-    destination: "inline" | "webhook";
+    destination: "inline" | "webhook" | "s3" | "warehouse";
     sink_url: string | null;
+    payload_json: unknown;
   }>(
     `
-      SELECT id, org_id, dataset, destination, sink_url
+      SELECT id, org_id, dataset, destination, sink_url, payload_json
       FROM billing_report_exports
       WHERE status = 'pending'
         AND scheduled_for <= NOW()
@@ -973,35 +1000,73 @@ async function processReportExports(): Promise<void> {
     try {
       const report = await buildReportCsv(job.dataset, job.org_id ?? null);
       const contentHash = crypto.createHash("sha256").update(report.csv).digest("hex");
+      const payloadJson = (job.payload_json ?? {}) as Record<string, unknown>;
 
-      if (job.destination === "webhook") {
-        const sinkUrl = job.sink_url ?? env.BILLING_REPORT_DEFAULT_SINK_URL;
+      if (job.destination === "webhook" || job.destination === "warehouse") {
+        const sinkUrl =
+          job.sink_url ??
+          (job.destination === "warehouse" ? env.BILLING_REPORT_WAREHOUSE_SINK_URL : env.BILLING_REPORT_DEFAULT_SINK_URL) ??
+          env.BILLING_REPORT_DEFAULT_SINK_URL;
         if (!sinkUrl) {
-          throw new Error("report export destination webhook requires sink URL");
+          throw new Error(`report export destination ${job.destination} requires sink URL`);
         }
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), env.BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS * 1000);
-        const headers: Record<string, string> = {
-          "content-type": "text/csv; charset=utf-8",
-          "x-fdt-report-id": job.id,
-          "x-fdt-report-dataset": job.dataset,
-        };
-        if (env.BILLING_REPORT_SIGNING_SECRET) {
-          const ts = `${Math.floor(Date.now() / 1000)}`;
-          headers["x-fdt-timestamp"] = ts;
-          headers["x-fdt-signature"] = hmacSignature(env.BILLING_REPORT_SIGNING_SECRET, ts, report.csv);
-        }
-
         try {
-          const response = await fetch(sinkUrl, {
-            method: "POST",
-            headers,
-            body: report.csv,
-            signal: controller.signal,
-          });
-          if (!response.ok) {
-            throw new Error(`report sink responded with status ${response.status}`);
+          if (job.destination === "webhook") {
+            const headers: Record<string, string> = {
+              "content-type": "text/csv; charset=utf-8",
+              "x-fdt-report-id": job.id,
+              "x-fdt-report-dataset": job.dataset,
+            };
+            if (env.BILLING_REPORT_SIGNING_SECRET) {
+              const ts = `${Math.floor(Date.now() / 1000)}`;
+              headers["x-fdt-timestamp"] = ts;
+              headers["x-fdt-signature"] = hmacSignature(env.BILLING_REPORT_SIGNING_SECRET, ts, report.csv);
+            }
+
+            const response = await fetch(sinkUrl, {
+              method: "POST",
+              headers,
+              body: report.csv,
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              throw new Error(`report sink responded with status ${response.status}`);
+            }
+          } else {
+            const body = JSON.stringify({
+              reportId: job.id,
+              dataset: job.dataset,
+              format: "csv",
+              rowCount: report.rowCount,
+              contentHash,
+              generatedAt: new Date().toISOString(),
+              csvBase64: Buffer.from(report.csv).toString("base64"),
+            });
+
+            const headers: Record<string, string> = {
+              "content-type": "application/json; charset=utf-8",
+              "x-fdt-report-id": job.id,
+              "x-fdt-report-dataset": job.dataset,
+              "x-fdt-report-format": "csv",
+            };
+            if (env.BILLING_REPORT_SIGNING_SECRET) {
+              const ts = `${Math.floor(Date.now() / 1000)}`;
+              headers["x-fdt-timestamp"] = ts;
+              headers["x-fdt-signature"] = hmacSignature(env.BILLING_REPORT_SIGNING_SECRET, ts, body);
+            }
+
+            const response = await fetch(sinkUrl, {
+              method: "POST",
+              headers,
+              body,
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              throw new Error(`warehouse sink responded with status ${response.status}`);
+            }
           }
         } finally {
           clearTimeout(timeout);
@@ -1016,11 +1081,48 @@ async function processReportExports(): Promise<void> {
               row_count = $2,
               content_hash = $3,
               content_text = NULL,
+              sink_url = $4,
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
           `,
-          [job.id, report.rowCount, contentHash],
+          [job.id, report.rowCount, contentHash, sinkUrl],
+        );
+      } else if (job.destination === "s3") {
+        if (!env.BILLING_REPORT_S3_BUCKET) {
+          throw new Error("BILLING_REPORT_S3_BUCKET is required for s3 report destination");
+        }
+        const keyFromPayload = typeof payloadJson.key === "string" ? payloadJson.key.trim() : "";
+        const keyPrefixRaw = typeof payloadJson.keyPrefix === "string" ? payloadJson.keyPrefix : env.BILLING_REPORT_S3_KEY_PREFIX;
+        const keyPrefix = keyPrefixRaw.endsWith("/") ? keyPrefixRaw : `${keyPrefixRaw}/`;
+        const key = keyFromPayload || `${keyPrefix}${job.dataset}/${new Date().toISOString().slice(0, 10)}/${job.id}.csv`;
+
+        const client = getS3Client();
+        await client.send(
+          new PutObjectCommand({
+            Bucket: env.BILLING_REPORT_S3_BUCKET,
+            Key: key,
+            Body: report.csv,
+            ContentType: "text/csv; charset=utf-8",
+          }),
+        );
+
+        const sinkRef = `s3://${env.BILLING_REPORT_S3_BUCKET}/${key}`;
+        await db.query(
+          `
+            UPDATE billing_report_exports
+            SET
+              status = 'completed',
+              completed_at = NOW(),
+              row_count = $2,
+              content_hash = $3,
+              content_text = NULL,
+              sink_url = $4,
+              error = NULL,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [job.id, report.rowCount, contentHash, sinkRef],
         );
       } else {
         await db.query(

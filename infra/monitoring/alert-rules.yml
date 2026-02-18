@@ -66,3 +66,27 @@ groups:
           summary: Certificate lifecycle event backlog is growing
           description: "pending_events={{ $value }}"
           runbook_url: docs/runbooks/ops-oncall.md#certificate-event-backlog
+
+  - name: relay-capacity
+    interval: 30s
+    rules:
+      - alert: RelayOverlimitRejectionsBurst
+        expr: increase(fdt_relay_http_overlimit_rejections_total[10m]) + increase(fdt_relay_tcp_overlimit_rejections_total[10m]) > 100
+        for: 5m
+        labels:
+          severity: ticket
+          team: edge
+        annotations:
+          summary: Relay is rejecting traffic due to concurrency limits
+          description: "http/tcp overlimit rejections spiked in the last 10m"
+          runbook_url: docs/runbooks/ops-oncall.md#relay-overlimit-burst
+      - alert: RelayInflightHigh
+        expr: fdt_relay_inflight_http_requests > 2000
+        for: 10m
+        labels:
+          severity: ticket
+          team: edge
+        annotations:
+          summary: Relay in-flight HTTP requests are elevated
+          description: "inflight_http={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#relay-inflight-high
