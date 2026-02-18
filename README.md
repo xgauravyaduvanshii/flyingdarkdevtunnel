@@ -113,6 +113,13 @@ bash scripts/integration-smoke.sh
   - `POST /v1/admin/billing-webhooks/:id/replay`
   - `POST /v1/admin/billing-webhooks/reconcile`
 
+## Certificate worker alerts
+
+- `services/worker-certificates` supports proactive alerting:
+  - `CERT_EXPIRY_WARN_DAYS` (default: `30`)
+  - `CERT_ALERT_WEBHOOK_URL` (optional outbound webhook target)
+  - `CERT_ALERT_COOLDOWN_SECONDS` (default: `1800`)
+
 ## Example multi-tunnel config
 
 See `ourdomain.yml.example` or `go/ourdomain.example.yml`.

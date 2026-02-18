@@ -155,6 +155,9 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
       CERT_WORKER_INTERVAL_SECONDS: 300
       TLS_PROBE_TIMEOUT_SECONDS: 8
+      CERT_EXPIRY_WARN_DAYS: 30
+      CERT_ALERT_WEBHOOK_URL: ""
+      CERT_ALERT_COOLDOWN_SECONDS: 1800
     depends_on:
       - postgres
 

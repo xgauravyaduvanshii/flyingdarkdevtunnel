@@ -25,6 +25,7 @@
 - `services/worker-billing`: provider-scoped alert webhook delivery for webhook failure spikes.
 - `services/worker-inspector`: replay queue processing and retention cleanup.
 - `services/worker-certificates`: custom-domain TLS probe loop and certificate lifecycle status sync.
+- `services/worker-certificates`: expiry/tls-error warning pipeline with optional alert-webhook delivery + cooldown.
 
 ## Storage
 - PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements, billing webhook idempotency event store (`billing_webhook_events`).
