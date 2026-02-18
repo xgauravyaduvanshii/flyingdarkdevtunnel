@@ -14,6 +14,9 @@ Admin operations:
 - `GET /v1/admin/cert-events` (queue/DLQ visibility)
 - `POST /v1/admin/cert-events/:id/replay` (single-event replay)
 - `POST /v1/admin/cert-events/replay` (bulk replay by status/source/cluster)
+- `GET /v1/admin/cert-incidents` (tiered open/acked/resolved incident visibility)
+- `POST /v1/admin/cert-incidents/:id/ack`
+- `POST /v1/admin/cert-incidents/:id/resolve`
 - `GET /v1/admin/domains/cert-region-summary` (cross-region lifecycle summary)
 - `GET /v1/admin/domains/cert-replication` (per-region replica state inventory)
 - `GET /v1/relay/cert-replication` (relay-consumable region snapshot, token-auth)
@@ -53,6 +56,9 @@ Admin operations:
 
 ## Current limits
 - Event ingest now supports per-source/per-cluster HMAC provenance validation (`CERT_EVENT_SOURCE_KEYS`) with timestamp freshness checks.
+- Callback-only payloads are supported (`callbackClass`/`callbackAction`) and mapped into canonical lifecycle event types.
+- Callback metadata (`callback_class`, `callback_action`, `callback_attempt`, `callback_received_at`) is persisted for audit depth.
+- Tiered cert incidents are materialized from failure callbacks and exposed for admin acknowledgment/resolution workflows.
 - Probes still run as fallback and process a bounded batch.
 - Region replication is control-plane state replication and does not yet perform edge-local cert material transfer.
 

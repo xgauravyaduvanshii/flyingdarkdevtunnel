@@ -21,6 +21,9 @@
 4. For export sink backlog, inspect ACK state on:
    - `GET /v1/admin/billing-reports/exports`
    - `POST /v1/admin/billing-reports/exports/ack-reconcile`
+5. For external settlement drift, inspect and reconcile:
+   - `GET /v1/admin/billing-settlement-receipts`
+   - `POST /v1/admin/billing-settlement-receipts/:id/reconcile`
 
 ## Replay automation path
 - Worker auto-trigger uses signed endpoint:

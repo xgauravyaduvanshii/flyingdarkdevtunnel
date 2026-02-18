@@ -15,6 +15,12 @@ const certEventTypeSchema = z.enum([
   "renewal_failed",
   "certificate_expiring",
 ]);
+const certCallbackClassSchema = z.enum(["issuance", "renewal", "challenge", "deployment"]);
+const certCallbackActionSchema = z.enum(["started", "succeeded", "failed", "retrying"]);
+
+type CertEventType = z.infer<typeof certEventTypeSchema>;
+type CertCallbackClass = z.infer<typeof certCallbackClassSchema>;
+type CertCallbackAction = z.infer<typeof certCallbackActionSchema>;
 
 type CertSourceKeyMap = Map<string, string>;
 
@@ -85,9 +91,184 @@ function safeHexCompare(a: string, b: string): boolean {
   return crypto.timingSafeEqual(left, right);
 }
 
+function resolveCallbackEventType(
+  eventType: CertEventType | undefined,
+  callbackClass: CertCallbackClass | undefined,
+  callbackAction: CertCallbackAction | undefined,
+): CertEventType | null {
+  if (eventType) return eventType;
+  if (!callbackClass || !callbackAction) return null;
+
+  if (callbackClass === "issuance") {
+    if (callbackAction === "succeeded") return "issuance_succeeded";
+    if (callbackAction === "failed") return "issuance_failed";
+  }
+  if (callbackClass === "renewal") {
+    if (callbackAction === "succeeded") return "renewal_succeeded";
+    if (callbackAction === "failed") return "renewal_failed";
+  }
+  if (callbackClass === "challenge" && callbackAction === "failed") {
+    return "issuance_failed";
+  }
+  if (callbackClass === "deployment" && callbackAction === "failed") {
+    return "renewal_failed";
+  }
+  if (callbackClass === "deployment" && callbackAction === "succeeded") {
+    return "renewal_succeeded";
+  }
+  return null;
+}
+
 export const domainRoutes: FastifyPluginAsync = async (app) => {
   const sourceKeys = parseCertSourceKeys(app.env.CERT_EVENT_SOURCE_KEYS);
   const provenanceRequired = app.env.CERT_EVENT_REQUIRE_PROVENANCE || sourceKeys.size > 0;
+
+  function incidentTierForEvent(input: {
+    eventType: CertEventType;
+    callbackClass?: CertCallbackClass;
+    callbackAction?: CertCallbackAction;
+    callbackAttempt?: number;
+  }): 1 | 2 | 3 | null {
+    const callbackAttempt = input.callbackAttempt ?? 1;
+
+    if (input.eventType === "renewal_failed") {
+      if (callbackAttempt >= 3) return 3;
+      return 2;
+    }
+    if (input.eventType === "issuance_failed") {
+      if (input.callbackClass === "challenge" && callbackAttempt >= 3) return 2;
+      if (callbackAttempt >= 5) return 3;
+      return 1;
+    }
+    if (input.eventType === "certificate_expiring") {
+      return callbackAttempt >= 2 ? 2 : 1;
+    }
+    return null;
+  }
+
+  async function upsertCertIncident(input: {
+    domainId: string | null;
+    domain: string;
+    source: string;
+    clusterId: string | null;
+    eventId: string;
+    eventType: CertEventType;
+    reason?: string | null;
+    callbackClass?: CertCallbackClass;
+    callbackAction?: CertCallbackAction;
+    callbackAttempt?: number;
+  }): Promise<void> {
+    const tier = incidentTierForEvent({
+      eventType: input.eventType,
+      callbackClass: input.callbackClass,
+      callbackAction: input.callbackAction,
+      callbackAttempt: input.callbackAttempt,
+    });
+    if (!tier) {
+      if (input.eventType === "issuance_succeeded" || input.eventType === "renewal_succeeded") {
+        await app.db.query(
+          `
+            UPDATE certificate_incidents
+            SET
+              status = 'resolved',
+              resolved_at = NOW(),
+              context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('resolvedByEventId', $2::uuid),
+              updated_at = NOW()
+            WHERE domain = $1
+              AND incident_type IN ('issuance_failed', 'renewal_failed')
+              AND status <> 'resolved'
+          `,
+          [input.domain, input.eventId],
+        );
+      }
+      return;
+    }
+
+    const orgRow = input.domainId
+      ? await app.db.query<{ org_id: string }>(`SELECT org_id FROM custom_domains WHERE id = $1 LIMIT 1`, [input.domainId])
+      : await app.db.query<{ org_id: string }>(`SELECT org_id FROM custom_domains WHERE domain = $1 LIMIT 1`, [input.domain]);
+    const orgId = orgRow.rows[0]?.org_id ?? null;
+
+    const incidentType =
+      input.eventType === "issuance_failed"
+        ? "issuance_failed"
+        : input.eventType === "renewal_failed"
+          ? "renewal_failed"
+          : input.eventType === "certificate_expiring"
+            ? "certificate_expiring"
+            : "tls_error";
+
+    const existing = await app.db.query<{ id: string }>(
+      `
+        SELECT id
+        FROM certificate_incidents
+        WHERE domain = $1
+          AND incident_type = $2
+          AND status = 'open'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [input.domain, incidentType],
+    );
+
+    const context = {
+      source: input.source,
+      clusterId: input.clusterId,
+      callbackClass: input.callbackClass ?? null,
+      callbackAction: input.callbackAction ?? null,
+      callbackAttempt: input.callbackAttempt ?? null,
+    };
+
+    if (existing.rowCount && existing.rows[0]) {
+      await app.db.query(
+        `
+          UPDATE certificate_incidents
+          SET
+            tier = GREATEST(tier, $2),
+            event_id = $3::uuid,
+            reason = COALESCE($4, reason),
+            context = COALESCE(context, '{}'::jsonb) || $5::jsonb,
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [existing.rows[0].id, tier, input.eventId, input.reason ?? null, context],
+      );
+      return;
+    }
+
+    await app.db.query(
+      `
+        INSERT INTO certificate_incidents (
+          id,
+          domain_id,
+          domain,
+          org_id,
+          source,
+          cluster_id,
+          event_id,
+          incident_type,
+          tier,
+          status,
+          reason,
+          context
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8, $9, 'open', $10, $11)
+      `,
+      [
+        uuidv4(),
+        input.domainId,
+        input.domain,
+        orgId,
+        input.source,
+        input.clusterId,
+        input.eventId,
+        incidentType,
+        tier,
+        input.reason ?? null,
+        context,
+      ],
+    );
+  }
 
   async function recordCertSourceActivity(input: {
     source: string;
@@ -150,7 +331,11 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         sourceEventId: z.string().min(3).max(200).optional(),
         domainId: z.string().uuid().optional(),
         domain: z.string().min(3).optional(),
-        eventType: certEventTypeSchema,
+        eventType: certEventTypeSchema.optional(),
+        callbackClass: certCallbackClassSchema.optional(),
+        callbackAction: certCallbackActionSchema.optional(),
+        callbackAttempt: z.coerce.number().int().positive().max(100).optional(),
+        callbackReceivedAt: z.coerce.date().optional(),
         certificateRef: z.string().max(255).optional(),
         notAfter: z.coerce.date().optional(),
         renewalDueAt: z.coerce.date().optional(),
@@ -158,6 +343,26 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         payload: z.record(z.unknown()).optional(),
       })
       .parse(request.body ?? {});
+
+    if (!!body.callbackClass !== !!body.callbackAction) {
+      return reply.code(400).send({ message: "callbackClass and callbackAction must be provided together" });
+    }
+
+    const callbackDerivedEventType = body.callbackClass
+      ? resolveCallbackEventType(undefined, body.callbackClass, body.callbackAction)
+      : null;
+    if (body.eventType && callbackDerivedEventType && callbackDerivedEventType !== body.eventType) {
+      return reply.code(400).send({
+        message: `callbackClass/callbackAction map to ${callbackDerivedEventType} but eventType is ${body.eventType}`,
+      });
+    }
+
+    const resolvedEventType = resolveCallbackEventType(body.eventType, body.callbackClass, body.callbackAction);
+    if (!resolvedEventType) {
+      return reply.code(400).send({
+        message: "Unable to resolve eventType from payload; provide eventType or callbackClass/callbackAction mapping",
+      });
+    }
 
     const source = body.source.trim().toLowerCase();
     let eventClusterId = body.clusterId?.trim().toLowerCase() ?? "";
@@ -177,7 +382,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           source: sourceHeader || source,
           clusterId: clusterHeader || "unknown",
           eventId: body.sourceEventId ?? null,
-          eventType: body.eventType,
+          eventType: resolvedEventType,
           status: "signature_failed",
           signatureFailed: true,
         });
@@ -190,7 +395,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           source: sourceHeader,
           clusterId: clusterHeader,
           eventId: body.sourceEventId ?? null,
-          eventType: body.eventType,
+          eventType: resolvedEventType,
           status: "signature_failed",
           signatureFailed: true,
         });
@@ -203,7 +408,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           source: sourceHeader,
           clusterId: clusterHeader,
           eventId: body.sourceEventId ?? null,
-          eventType: body.eventType,
+          eventType: resolvedEventType,
           status: "signature_failed",
           signatureFailed: true,
         });
@@ -216,7 +421,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           source: sourceHeader,
           clusterId: clusterHeader,
           eventId: body.sourceEventId ?? null,
-          eventType: body.eventType,
+          eventType: resolvedEventType,
           status: "signature_failed",
           signatureFailed: true,
         });
@@ -290,6 +495,10 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               cluster_id = COALESCE($10, cluster_id),
               provenance_subject = COALESCE($11, provenance_subject),
               provenance_verified = COALESCE($12, provenance_verified),
+              callback_class = COALESCE($13, callback_class),
+              callback_action = COALESCE($14, callback_action),
+              callback_attempt = COALESCE($15, callback_attempt),
+              callback_received_at = COALESCE($16, callback_received_at),
               last_error = NULL,
               retry_count = 0,
               next_retry_at = NULL,
@@ -301,7 +510,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             eventId,
             domainId,
             domain,
-            body.eventType,
+            resolvedEventType,
             body.certificateRef ?? null,
             body.notAfter ?? null,
             body.renewalDueAt ?? null,
@@ -310,6 +519,10 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             eventClusterId || null,
             provenanceSubject,
             provenanceRequired ? provenanceVerified : null,
+            body.callbackClass ?? null,
+            body.callbackAction ?? null,
+            body.callbackAttempt ?? null,
+            body.callbackReceivedAt ?? null,
           ],
         );
       } else {
@@ -331,12 +544,16 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               payload_json,
               provenance_subject,
               provenance_verified,
+              callback_class,
+              callback_action,
+              callback_attempt,
+              callback_received_at,
               retry_count,
               next_retry_at,
               last_error,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13, $14, 0, NULL, NULL, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, NULL, NULL, NOW())
           `,
           [
             eventId,
@@ -345,7 +562,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             eventClusterId || null,
             domainId,
             domain,
-            body.eventType,
+            resolvedEventType,
             body.certificateRef ?? null,
             body.notAfter ?? null,
             body.renewalDueAt ?? null,
@@ -353,6 +570,10 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             body.payload ?? null,
             provenanceSubject,
             provenanceVerified,
+            body.callbackClass ?? null,
+            body.callbackAction ?? null,
+            body.callbackAttempt ?? null,
+            body.callbackReceivedAt ?? null,
           ],
         );
       }
@@ -374,9 +595,13 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             reason,
             payload_json,
             provenance_subject,
-            provenance_verified
+            provenance_verified,
+            callback_class,
+            callback_action,
+            callback_attempt,
+            callback_received_at
           )
-          VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12, $13)
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         `,
         [
           eventId,
@@ -384,7 +609,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           eventClusterId || null,
           domainId,
           domain,
-          body.eventType,
+          resolvedEventType,
           body.certificateRef ?? null,
           body.notAfter ?? null,
           body.renewalDueAt ?? null,
@@ -392,6 +617,10 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           body.payload ?? null,
           provenanceSubject,
           provenanceVerified,
+          body.callbackClass ?? null,
+          body.callbackAction ?? null,
+          body.callbackAttempt ?? null,
+          body.callbackReceivedAt ?? null,
         ],
       );
     }
@@ -401,10 +630,23 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         source,
         clusterId: eventClusterId,
         eventId: body.sourceEventId ?? eventId,
-        eventType: body.eventType,
+        eventType: resolvedEventType,
         status: "accepted",
       });
     }
+
+    await upsertCertIncident({
+      domainId,
+      domain,
+      source,
+      clusterId: eventClusterId || null,
+      eventId,
+      eventType: resolvedEventType,
+      reason: body.reason ?? null,
+      callbackClass: body.callbackClass,
+      callbackAction: body.callbackAction,
+      callbackAttempt: body.callbackAttempt,
+    });
 
     return reply.code(202).send({
       ok: true,
@@ -706,6 +948,10 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         retry_count,
         next_retry_at,
         last_error,
+        callback_class,
+        callback_action,
+        callback_attempt,
+        callback_received_at,
         provenance_subject,
         provenance_verified,
         created_at,

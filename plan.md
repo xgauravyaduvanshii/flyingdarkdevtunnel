@@ -194,19 +194,42 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Extended integration coverage:
     - report ACK success + ACK reconcile requeue behavior
     - relay cert-replication snapshot retrieval path.
+- Queue implementation continuation (latest update):
+  - Added certificate callback enrichment depth in control-plane ingest:
+    - `POST /v1/domains/cert-events` now supports callback-only payloads (`callbackClass`/`callbackAction`) with canonical `eventType` resolution.
+    - callback metadata persisted on cert events (`callback_class`, `callback_action`, `callback_attempt`, `callback_received_at`).
+    - conflict validation added when explicit `eventType` disagrees with callback mapping.
+  - Added tiered certificate incident operations:
+    - event ingest now opens/updates incidents with tier escalation by callback attempt and event class.
+    - admin APIs:
+      - `GET /v1/admin/cert-incidents`
+      - `POST /v1/admin/cert-incidents/:id/ack`
+      - `POST /v1/admin/cert-incidents/:id/resolve`
+    - admin cert event listing now includes callback metadata fields.
+  - Added signed settlement receipt reconciliation flow:
+    - signed ingest endpoint `POST /v1/billing/settlement-receipts`
+      - HMAC headers: `x-fdt-settlement-timestamp`, `x-fdt-settlement-signature`
+    - admin settlement operations:
+      - `GET /v1/admin/billing-settlement-receipts`
+      - `POST /v1/admin/billing-settlement-receipts/:id/reconcile`
+      - `POST /v1/admin/billing-settlement-receipts/reconcile`
+  - Extended integration coverage:
+    - cert callback ingest + incident ack/resolve path.
+    - settlement receipt signature verification + matched/delta reconcile outcomes.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Event-driven issuance/renewal status integration shipped with per-source/per-cluster provenance verification.
   - Renewal SLA escalation shipped with environment-aware incident routing (`dev|staging|prod`) and new alert classes.
-  - DLQ replay, cert-region summary, and control-plane multi-region replication snapshots shipped.
-  - Remaining gap: cert-manager callback enrichment depth and cert-material distribution workflow for strict active-active failover.
+  - DLQ replay, cert-region summary, callback-enriched ingest, incident tiering, and control-plane multi-region replication snapshots shipped.
+  - Remaining gap: cert-material distribution workflow for strict active-active failover.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
   - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
   - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`).
-  - Export retry/reconciliation pipeline + sink ACK tracking shipped; live tuning and external finance sink reconciliation remain.
+  - Export retry/reconciliation pipeline + sink ACK tracking shipped.
+  - Signed settlement receipt ingest + admin reconciliation shipped; live tuning/telemetry policy calibration remains.
 - Enterprise controls:
   - Team/org RBAC, role templates, and SCIM-style provisioning event tracking shipped.
   - SSO provider config scaffold shipped; IdP onboarding/enforcement depth remains.
@@ -222,11 +245,10 @@ Phase 1 (MVP hardening + production readiness improvements)
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Add issuance/renewal callback ingestion depth and incident escalation tiers.
    - Add cert material distribution workflow for strict active-active failover.
 2. Payment hardening + finance ops:
    - Tune provider retry/dunning policy by live payment telemetry and recovery outcomes.
-   - Expand external finance reconciliation sinks with signed settlement receipts.
+   - Expand external finance reconciliation sinks beyond signed settlement receipts (scheduled provider exports / external GL sinks).
 3. Multi-region edge foundations:
    - Expand beyond US with region capacity planning and failover policy drills.
 4. Enterprise controls:

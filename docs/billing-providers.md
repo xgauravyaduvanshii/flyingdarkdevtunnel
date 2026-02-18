@@ -42,6 +42,10 @@ If provider credentials or mapped plan IDs are missing, the API returns a mock c
   - `POST /v1/billing/reports/exports/:id/ack`
   - header: `x-fdt-report-ack-token`
   - used by external sinks to confirm delivery receipt.
+- Signed settlement receipt ingest:
+  - `POST /v1/billing/settlement-receipts`
+  - headers: `x-fdt-settlement-timestamp`, `x-fdt-settlement-signature`
+  - used by external finance sinks/warehouses to push signed settlement summaries.
 
 ## Webhooks
 - Stripe: `POST /v1/billing/webhook/stripe` (legacy alias: `POST /v1/billing/webhook`)
@@ -99,6 +103,10 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - sink acknowledgement tracking:
     - `delivery_ack_status` (`not_required|pending|acknowledged|expired`)
     - `delivery_ack_deadline`, `delivery_ack_at`, `delivery_ack_metadata`
+- `billing_settlement_receipts`:
+  - signed external settlement batch receipts (`provider`, `batch_id`, `period_*`, event/amount totals, digest)
+  - reconciliation status and deltas (`pending|matched|delta|failed`)
+  - admin reconciliation output (`reconciled_at`, delta fields).
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
@@ -119,6 +127,7 @@ Additional worker hardening:
 - Webhook latency SLO: `BILLING_WEBHOOK_SLO_SECONDS`
 - Runbook replay signing: `BILLING_RUNBOOK_SIGNING_SECRET`
 - Runbook replay limits: `BILLING_RUNBOOK_REPLAY_LIMIT`, `BILLING_RUNBOOK_REPLAY_COOLDOWN_SECONDS`
+- Settlement receipt signing: `BILLING_SETTLEMENT_SIGNING_SECRET`, `BILLING_SETTLEMENT_MAX_AGE_SECONDS`
 - Dunning notifications: `BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL`, `BILLING_DUNNING_NOTIFICATION_SECRET`
 - Dunning max stage: `BILLING_DUNNING_MAX_STAGE`
 - Report exports: `BILLING_REPORT_EXPORT_BATCH_SIZE`, `BILLING_REPORT_DEFAULT_SINK_URL`, `BILLING_REPORT_SIGNING_SECRET`
@@ -136,6 +145,9 @@ Additional worker hardening:
   - `POST /v1/admin/billing-webhooks/reconcile`
   - `GET /v1/admin/billing-finance-events?provider=&type=&status=&orgId=&limit=`
   - `GET /v1/admin/billing-dunning?provider=&status=&orgId=&limit=`
+  - `GET /v1/admin/billing-settlement-receipts?provider=&status=&batchId=&limit=`
+  - `POST /v1/admin/billing-settlement-receipts/:id/reconcile`
+  - `POST /v1/admin/billing-settlement-receipts/reconcile`
   - `POST /v1/admin/billing-reports/exports`
   - `GET /v1/admin/billing-reports/exports`
   - `POST /v1/admin/billing-reports/exports/reconcile`

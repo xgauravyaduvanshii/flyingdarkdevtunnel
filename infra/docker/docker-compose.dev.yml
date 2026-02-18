@@ -58,6 +58,8 @@ services:
       BILLING_SUCCESS_URL: http://localhost:3000/billing
       BILLING_CANCEL_URL: http://localhost:3000/billing
       BILLING_WEBHOOK_MAX_AGE_SECONDS: 86400
+      BILLING_SETTLEMENT_SIGNING_SECRET: settlement_dev_secret_min_32_chars
+      BILLING_SETTLEMENT_MAX_AGE_SECONDS: 300
       AUTH_ABUSE_BLOCK_THRESHOLD: 3
       AUTH_ABUSE_BLOCK_WINDOW_MINUTES: 30
       RELAY_REGION_WEIGHTS: us=us-edge-dev-1:1
