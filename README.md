@@ -14,7 +14,7 @@ Implemented stack:
 - `apps/console-web`: user/admin console (onboarding, tunnels, inspect, domains, billing, admin pages)
 - `apps/docs-site`: docs and examples
 - `services/api`: control plane API (`/v1/auth`, `/v1/tunnels`, `/v1/requests`, `/v1/domains`, `/v1/billing`, `/v1/admin`, `/v1/agent`)
-- `services/worker-billing`: Stripe subscription -> entitlement sync loop
+- `services/worker-billing`: Stripe/Razorpay/PayPal subscription -> entitlement sync loop
 - `services/worker-inspector`: replay queue + retention cleanup loop
 - `services/worker-certificates`: custom-domain TLS probe and lifecycle status sync loop
 - `go/relay`: edge relay (public HTTP + control websocket + TCP listeners)
@@ -98,6 +98,15 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/fdt \
 REDIS_URL=redis://127.0.0.1:6379 \
 bash scripts/integration-smoke.sh
 ```
+
+## Billing providers
+
+- `POST /v1/billing/checkout-session` accepts `provider` = `stripe` | `razorpay` | `paypal`.
+- Webhooks:
+  - `POST /v1/billing/webhook/stripe` (legacy alias: `/v1/billing/webhook`)
+  - `POST /v1/billing/webhook/razorpay`
+  - `POST /v1/billing/webhook/paypal`
+- If provider keys are absent, API returns safe mock checkout URLs for local/dev.
 
 ## Example multi-tunnel config
 

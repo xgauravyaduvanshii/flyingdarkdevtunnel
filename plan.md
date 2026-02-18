@@ -17,6 +17,13 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Multi-provider billing integration:
+  - Added provider-aware checkout for Stripe, Razorpay, and PayPal.
+  - Added provider-specific webhook endpoints and plan-entitlement mapping.
+  - Added DB support for provider plan IDs and subscription IDs.
+  - Added worker-billing reconciliation for all three providers.
+  - Added console billing provider selector and provider mock fallback UX.
+  - Added API integration coverage for provider mock checkout flows.
 - Custom-domain routing hardening APIs:
   - DNS verification flow (strict mode optional).
   - Domain-to-tunnel routing API.
@@ -46,20 +53,26 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Relay autocert path implemented.
   - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
   - Add cert-expiry alerting and on-call runbooks.
+- Payment production hardening:
+  - Raw-body signature verification for all providers in production edge path.
+  - Idempotency and replay-protection store for webhook events.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
    - Integrate real issuance/renewal events from cert manager.
    - Add retry/backoff semantics and domain-level failure policy.
-2. Multi-region edge foundations:
+2. Payment hardening + finance ops:
+   - Invoice/tax records, failed-payment recovery, and dunning workflows.
+   - Refund/cancel flows with audit trails.
+3. Multi-region edge foundations:
    - Region-aware relay registration and host assignment.
-3. Enterprise controls:
+4. Enterprise controls:
    - Team/org RBAC expansion.
    - SSO and immutable audit controls.
-4. Performance and resilience:
+5. Performance and resilience:
    - Load tests for relay concurrency and reconnect storms.
    - Backpressure and connection limit policy stress tests.
-5. Security hardening:
+6. Security hardening:
    - Secret rotation workflows and token revoke list.
    - Enhanced abuse/rate limiting and anomaly detection.
 

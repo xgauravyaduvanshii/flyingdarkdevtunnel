@@ -39,6 +39,8 @@ const statements = [
     ip_allowlist BOOLEAN NOT NULL,
     retention_hours INTEGER NOT NULL,
     stripe_price_id TEXT,
+    razorpay_plan_id TEXT,
+    paypal_plan_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   `,
@@ -61,8 +63,12 @@ const statements = [
   CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    billing_provider TEXT NOT NULL DEFAULT 'stripe' CHECK (billing_provider IN ('stripe', 'razorpay', 'paypal')),
+    external_customer_id TEXT,
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
+    razorpay_subscription_id TEXT,
+    paypal_subscription_id TEXT,
     status TEXT NOT NULL,
     plan_id UUID REFERENCES plans(id),
     current_period_end TIMESTAMPTZ,
@@ -70,6 +76,52 @@ const statements = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(org_id)
   );
+  `,
+  `
+  ALTER TABLE plans ADD COLUMN IF NOT EXISTS razorpay_plan_id TEXT;
+  `,
+  `
+  ALTER TABLE plans ADD COLUMN IF NOT EXISTS paypal_plan_id TEXT;
+  `,
+  `
+  ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS billing_provider TEXT NOT NULL DEFAULT 'stripe';
+  `,
+  `
+  ALTER TABLE subscriptions
+  DROP CONSTRAINT IF EXISTS subscriptions_billing_provider_check;
+  `,
+  `
+  ALTER TABLE subscriptions
+  ADD CONSTRAINT subscriptions_billing_provider_check
+  CHECK (billing_provider IN ('stripe', 'razorpay', 'paypal'));
+  `,
+  `
+  ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS external_customer_id TEXT;
+  `,
+  `
+  ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS razorpay_subscription_id TEXT;
+  `,
+  `
+  ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS paypal_subscription_id TEXT;
+  `,
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription_id
+  ON subscriptions(stripe_subscription_id)
+  WHERE stripe_subscription_id IS NOT NULL;
+  `,
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_razorpay_subscription_id
+  ON subscriptions(razorpay_subscription_id)
+  WHERE razorpay_subscription_id IS NOT NULL;
+  `,
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_paypal_subscription_id
+  ON subscriptions(paypal_subscription_id)
+  WHERE paypal_subscription_id IS NOT NULL;
   `,
   `
   CREATE TABLE IF NOT EXISTS tunnels (

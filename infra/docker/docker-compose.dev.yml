@@ -48,6 +48,15 @@ services:
       JWT_REFRESH_SECRET: replace_with_at_least_32_characters_here
       AGENT_JWT_SECRET: replace_with_at_least_32_characters_here
       BASE_DOMAIN: tunnel.yourdomain.com
+      RAZORPAY_KEY_ID: ""
+      RAZORPAY_KEY_SECRET: ""
+      RAZORPAY_WEBHOOK_SECRET: ""
+      PAYPAL_CLIENT_ID: ""
+      PAYPAL_CLIENT_SECRET: ""
+      PAYPAL_WEBHOOK_ID: ""
+      PAYPAL_ENVIRONMENT: sandbox
+      BILLING_SUCCESS_URL: http://localhost:3000/billing
+      BILLING_CANCEL_URL: http://localhost:3000/billing
     ports:
       - "4000:4000"
     depends_on:
@@ -110,6 +119,11 @@ services:
     command: sh -lc "pnpm install && pnpm --filter @fdt/worker-billing dev"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
+      RAZORPAY_KEY_ID: ""
+      RAZORPAY_KEY_SECRET: ""
+      PAYPAL_CLIENT_ID: ""
+      PAYPAL_CLIENT_SECRET: ""
+      PAYPAL_ENVIRONMENT: sandbox
       BILLING_SYNC_INTERVAL_SECONDS: 60
     depends_on:
       - postgres

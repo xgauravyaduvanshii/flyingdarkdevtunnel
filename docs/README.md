@@ -4,6 +4,7 @@ This folder contains implementation-focused documentation for engineers operatin
 
 ## Contents
 - `docs/architecture.md`: system topology and data/control plane responsibilities.
+- `docs/billing-providers.md`: Stripe/Razorpay/PayPal checkout and webhook mapping.
 - `docs/certificate-lifecycle.md`: certificate state model, worker behavior, and hardening queue.
 - `docs/security-and-tls.md`: TLS termination/passthrough, auth, and edge policy enforcement.
 - `docs/testing-and-ci.md`: integration strategy, CI services, and smoke test flow.

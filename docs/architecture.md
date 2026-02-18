@@ -6,7 +6,7 @@
   - user/org auth and plan entitlements,
   - tunnel lifecycle APIs,
   - custom-domain management,
-  - admin/audit and billing hooks,
+  - admin/audit and billing hooks (Stripe/Razorpay/PayPal),
   - agent token issuance.
 
 ## Data Plane

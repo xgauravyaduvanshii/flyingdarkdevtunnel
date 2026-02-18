@@ -12,8 +12,11 @@ type Plan = {
   ip_allowlist: boolean;
 };
 
+type BillingProvider = "stripe" | "razorpay" | "paypal";
+
 export default function BillingPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [provider, setProvider] = useState<BillingProvider>("stripe");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -29,11 +32,12 @@ export default function BillingPage() {
 
   async function checkout(planCode: "pro" | "team") {
     try {
-      const session = await api<{ checkoutUrl: string }>("/v1/billing/checkout-session", {
+      const session = await api<{ checkoutUrl: string; mode: string; provider: BillingProvider }>("/v1/billing/checkout-session", {
         method: "POST",
-        body: JSON.stringify({ planCode }),
+        body: JSON.stringify({ planCode, provider }),
       });
-      setMessage(`Checkout session: ${session.checkoutUrl}`);
+      setMessage(`Launching ${session.provider} checkout`);
+      window.open(session.checkoutUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       setMessage(`Checkout failed: ${String(error)}`);
     }
@@ -41,6 +45,17 @@ export default function BillingPage() {
 
   return (
     <div className="grid cols-3">
+      <section className="card" style={{ gridColumn: "1 / -1" }}>
+        <h3>Payment provider</h3>
+        <select value={provider} onChange={(event) => setProvider(event.target.value as BillingProvider)}>
+          <option value="stripe">Stripe</option>
+          <option value="razorpay">Razorpay</option>
+          <option value="paypal">PayPal</option>
+        </select>
+        <p className="muted" style={{ marginTop: 10 }}>
+          Provider-aware checkout + webhook sync is enabled. Missing keys automatically fall back to mock checkout URLs.
+        </p>
+      </section>
       {plans.map((plan) => (
         <section className="card" key={plan.id}>
           <h3>{plan.name}</h3>
