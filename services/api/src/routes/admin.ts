@@ -1,8 +1,13 @@
+import argon2 from "argon2";
 import { FastifyPluginAsync } from "fastify";
+import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { computeAuditEntryHash } from "../lib/audit-chain.js";
+import { randomToken } from "../lib/utils.js";
 import { reconcileFailedWebhookEvents, replayWebhookEventById } from "./billing.js";
 
 const invoiceStatusSchema = z.enum(["draft", "open", "paid", "past_due", "void", "uncollectible", "failed", "refunded"]);
+const orgRoleSchema = z.enum(["owner", "admin", "member", "billing", "viewer"]);
 
 function csvEscape(value: unknown): string {
   const text = value == null ? "" : String(value);
@@ -37,6 +42,298 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { users: users.rows };
   });
 
+  app.get("/members", async (request) => {
+    const members = await app.db.query(
+      `
+      SELECT
+        m.id,
+        m.user_id,
+        m.org_id,
+        m.role,
+        m.created_at,
+        u.email,
+        u.created_at AS user_created_at
+      FROM memberships m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = $1
+      ORDER BY
+        CASE m.role
+          WHEN 'owner' THEN 0
+          WHEN 'admin' THEN 1
+          WHEN 'member' THEN 2
+          WHEN 'billing' THEN 3
+          ELSE 4
+        END,
+        m.created_at ASC
+    `,
+      [request.authUser!.orgId],
+    );
+
+    return { members: members.rows };
+  });
+
+  app.post("/members", async (request, reply) => {
+    const body = z
+      .object({
+        email: z.string().email(),
+        role: orgRoleSchema.default("member"),
+      })
+      .parse(request.body ?? {});
+
+    if (body.role === "owner" && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owners can add owner memberships" });
+    }
+
+    const user = await app.db.query<{ id: string; email: string }>(`SELECT id, email FROM users WHERE email = $1 LIMIT 1`, [body.email]);
+    if (!user.rowCount || !user.rows[0]) {
+      return reply.code(404).send({ message: "User not found for email" });
+    }
+
+    const membershipId = uuidv4();
+    await app.db.query(
+      `
+      INSERT INTO memberships (id, user_id, org_id, role)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, org_id) DO UPDATE
+      SET role = EXCLUDED.role
+    `,
+      [membershipId, user.rows[0].id, request.authUser!.orgId, body.role],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.member.upsert",
+      entityType: "membership",
+      entityId: user.rows[0].id,
+      metadata: { role: body.role, email: body.email },
+    });
+
+    return { ok: true, userId: user.rows[0].id, role: body.role };
+  });
+
+  app.patch("/members/:userId/role", async (request, reply) => {
+    const params = z.object({ userId: z.string().uuid() }).parse(request.params);
+    const body = z.object({ role: orgRoleSchema }).parse(request.body ?? {});
+
+    const target = await app.db.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2 LIMIT 1`,
+      [params.userId, request.authUser!.orgId],
+    );
+    if (!target.rowCount || !target.rows[0]) {
+      return reply.code(404).send({ message: "Membership not found" });
+    }
+
+    const currentRole = target.rows[0].role;
+    if (body.role === "owner" && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owners can assign owner role" });
+    }
+    if (currentRole === "owner" && body.role !== "owner" && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owners can demote owner role" });
+    }
+
+    if (currentRole === "owner" && body.role !== "owner") {
+      const owners = await app.db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM memberships WHERE org_id = $1 AND role = 'owner'`,
+        [request.authUser!.orgId],
+      );
+      const ownerCount = Number.parseInt(owners.rows[0]?.count ?? "0", 10);
+      if (ownerCount <= 1) {
+        return reply.code(409).send({ message: "Cannot remove the last owner" });
+      }
+    }
+
+    await app.db.query(
+      `UPDATE memberships SET role = $1 WHERE user_id = $2 AND org_id = $3`,
+      [body.role, params.userId, request.authUser!.orgId],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.member.role.update",
+      entityType: "membership",
+      entityId: params.userId,
+      metadata: { fromRole: currentRole, toRole: body.role },
+    });
+
+    return { ok: true, userId: params.userId, role: body.role };
+  });
+
+  app.delete("/members/:userId", async (request, reply) => {
+    const params = z.object({ userId: z.string().uuid() }).parse(request.params);
+    if (params.userId === request.authUser!.userId) {
+      return reply.code(409).send({ message: "Use another owner/admin to remove this membership" });
+    }
+
+    const target = await app.db.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2 LIMIT 1`,
+      [params.userId, request.authUser!.orgId],
+    );
+    if (!target.rowCount || !target.rows[0]) {
+      return reply.code(404).send({ message: "Membership not found" });
+    }
+
+    const targetRole = target.rows[0].role;
+    if (targetRole === "owner") {
+      if (request.authUser!.role !== "owner") {
+        return reply.code(403).send({ message: "Only owners can remove owners" });
+      }
+      const owners = await app.db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM memberships WHERE org_id = $1 AND role = 'owner'`,
+        [request.authUser!.orgId],
+      );
+      const ownerCount = Number.parseInt(owners.rows[0]?.count ?? "0", 10);
+      if (ownerCount <= 1) {
+        return reply.code(409).send({ message: "Cannot remove the last owner" });
+      }
+    } else if (targetRole === "admin" && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owners can remove admin memberships" });
+    }
+
+    await app.db.query(`DELETE FROM memberships WHERE user_id = $1 AND org_id = $2`, [params.userId, request.authUser!.orgId]);
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.member.delete",
+      entityType: "membership",
+      entityId: params.userId,
+      metadata: { role: targetRole },
+    });
+
+    return { ok: true };
+  });
+
+  app.get("/sso", async (request) => {
+    const sso = await app.db.query(
+      `
+      SELECT id, org_id, provider, enabled, issuer, entrypoint, audience, certificate, metadata_json, created_at, updated_at
+      FROM sso_providers
+      WHERE org_id = $1
+      LIMIT 1
+    `,
+      [request.authUser!.orgId],
+    );
+
+    return { sso: sso.rows[0] ?? null };
+  });
+
+  app.put("/sso", async (request) => {
+    const body = z
+      .object({
+        provider: z.enum(["saml", "oidc"]),
+        enabled: z.boolean().default(false),
+        issuer: z.string().max(500).optional(),
+        entrypoint: z.string().max(500).optional(),
+        audience: z.string().max(500).optional(),
+        certificate: z.string().max(8000).optional(),
+        metadata: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body ?? {});
+
+    await app.db.query(
+      `
+      INSERT INTO sso_providers (
+        id,
+        org_id,
+        provider,
+        enabled,
+        issuer,
+        entrypoint,
+        audience,
+        certificate,
+        metadata_json,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      ON CONFLICT (org_id) DO UPDATE
+      SET
+        provider = EXCLUDED.provider,
+        enabled = EXCLUDED.enabled,
+        issuer = EXCLUDED.issuer,
+        entrypoint = EXCLUDED.entrypoint,
+        audience = EXCLUDED.audience,
+        certificate = EXCLUDED.certificate,
+        metadata_json = EXCLUDED.metadata_json,
+        updated_at = NOW()
+    `,
+      [
+        uuidv4(),
+        request.authUser!.orgId,
+        body.provider,
+        body.enabled,
+        body.issuer ?? null,
+        body.entrypoint ?? null,
+        body.audience ?? null,
+        body.certificate ?? null,
+        body.metadata ?? null,
+      ],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.sso.upsert",
+      entityType: "sso_provider",
+      entityId: request.authUser!.orgId,
+      metadata: { provider: body.provider, enabled: body.enabled },
+    });
+
+    return { ok: true };
+  });
+
+  app.post("/secrets/rotate/authtoken", async (request, reply) => {
+    const body = z
+      .object({
+        userId: z.string().uuid().optional(),
+        reason: z.string().min(2).max(500).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const targetUserId = body.userId ?? request.authUser!.userId;
+    const member = await app.db.query<{ role: string }>(
+      `SELECT role FROM memberships WHERE user_id = $1 AND org_id = $2 LIMIT 1`,
+      [targetUserId, request.authUser!.orgId],
+    );
+    if (!member.rowCount || !member.rows[0]) {
+      return reply.code(404).send({ message: "Target user is not in organization" });
+    }
+
+    if (targetUserId !== request.authUser!.userId && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owner can rotate other users' auth tokens" });
+    }
+
+    const rawAuthtoken = randomToken(24);
+    const hash = await argon2.hash(rawAuthtoken);
+
+    await app.db.query(`UPDATE users SET authtoken_hash = $1 WHERE id = $2`, [hash, targetUserId]);
+    await app.db.query(
+      `
+      INSERT INTO secret_rotations (id, actor_user_id, target_user_id, org_id, secret_type, reason, metadata)
+      VALUES ($1, $2, $3, $4, 'authtoken', $5, $6)
+    `,
+      [
+        uuidv4(),
+        request.authUser!.userId,
+        targetUserId,
+        request.authUser!.orgId,
+        body.reason ?? "admin authtoken rotation",
+        { targetRole: member.rows[0].role },
+      ],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.secret.rotate.authtoken",
+      entityType: "user",
+      entityId: targetUserId,
+      metadata: { reason: body.reason ?? null },
+    });
+
+    return { ok: true, userId: targetUserId, authtoken: rawAuthtoken };
+  });
+
   app.get("/tunnels", async () => {
     const tunnels = await app.db.query(
       `
@@ -64,7 +361,15 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         cd.tls_last_checked_at,
         cd.tls_not_after,
         cd.tls_last_error,
+        cd.cert_failure_policy,
+        cd.cert_failure_count,
+        cd.cert_retry_backoff_seconds,
+        cd.cert_next_retry_at,
+        cd.cert_last_event_type,
+        cd.cert_last_event_at,
+        cd.cert_renewal_due_at,
         cd.created_at,
+        cd.updated_at,
         cd.org_id,
         t.name AS tunnel_name
       FROM custom_domains cd
@@ -255,6 +560,164 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           payment_failed: "0",
         },
     };
+  });
+
+  app.get("/billing-dunning", async (request) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: z.enum(["open", "recovered", "closed"]).optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const cases = await app.db.query(
+      `
+      SELECT
+        id,
+        org_id,
+        provider,
+        subscription_ref,
+        status,
+        stage,
+        retry_count,
+        next_attempt_at,
+        last_attempt_at,
+        notification_count,
+        last_error,
+        latest_event_id,
+        latest_event_type,
+        created_at,
+        updated_at
+      FROM billing_dunning_cases
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::text IS NULL OR status = $2)
+        AND ($3::uuid IS NULL OR org_id = $3)
+      ORDER BY updated_at DESC
+      LIMIT $4
+    `,
+      [query.provider ?? null, query.status ?? null, query.orgId ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      open: string;
+      recovered: string;
+      closed: string;
+      due_now: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE status = 'open')::text AS open,
+        COUNT(*) FILTER (WHERE status = 'recovered')::text AS recovered,
+        COUNT(*) FILTER (WHERE status = 'closed')::text AS closed,
+        COUNT(*) FILTER (WHERE status = 'open' AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))::text AS due_now
+      FROM billing_dunning_cases
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::text IS NULL OR status = $2)
+        AND ($3::uuid IS NULL OR org_id = $3)
+    `,
+      [query.provider ?? null, query.status ?? null, query.orgId ?? null],
+    );
+
+    return {
+      cases: cases.rows,
+      stats: stats.rows[0] ?? { total: "0", open: "0", recovered: "0", closed: "0", due_now: "0" },
+    };
+  });
+
+  app.get("/billing-reports/exports", async (request) => {
+    const query = z
+      .object({
+        status: z.enum(["pending", "running", "completed", "failed"]).optional(),
+        dataset: z.enum(["finance_events", "invoices", "dunning"]).optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const exports = await app.db.query(
+      `
+      SELECT
+        id,
+        org_id,
+        dataset,
+        format,
+        status,
+        destination,
+        sink_url,
+        scheduled_for,
+        started_at,
+        completed_at,
+        row_count,
+        content_hash,
+        error,
+        created_at,
+        updated_at
+      FROM billing_report_exports
+      WHERE ($1::text IS NULL OR status = $1)
+        AND ($2::text IS NULL OR dataset = $2)
+        AND ($3::uuid IS NULL OR org_id = $3)
+      ORDER BY created_at DESC
+      LIMIT $4
+    `,
+      [query.status ?? null, query.dataset ?? null, query.orgId ?? null, query.limit],
+    );
+
+    return { exports: exports.rows };
+  });
+
+  app.post("/billing-reports/exports", async (request, reply) => {
+    const body = z
+      .object({
+        dataset: z.enum(["finance_events", "invoices", "dunning"]),
+        destination: z.enum(["inline", "webhook"]).optional().default("inline"),
+        sinkUrl: z.string().url().optional(),
+        orgId: z.string().uuid().optional(),
+        scheduledFor: z.coerce.date().optional(),
+        payload: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body ?? {});
+
+    if (body.destination === "webhook" && !body.sinkUrl) {
+      return reply.code(400).send({ message: "sinkUrl is required for webhook destination" });
+    }
+
+    const id = uuidv4();
+    await app.db.query(
+      `
+      INSERT INTO billing_report_exports (
+        id,
+        org_id,
+        dataset,
+        format,
+        status,
+        destination,
+        sink_url,
+        scheduled_for,
+        payload_json
+      )
+      VALUES ($1, $2, $3, 'csv', 'pending', $4, $5, $6, $7)
+    `,
+      [id, body.orgId ?? null, body.dataset, body.destination, body.sinkUrl ?? null, body.scheduledFor ?? new Date(), body.payload ?? null],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_report.export.create",
+      entityType: "billing_report_export",
+      entityId: id,
+      metadata: {
+        dataset: body.dataset,
+        destination: body.destination,
+        orgId: body.orgId ?? null,
+      },
+    });
+
+    return { ok: true, id };
   });
 
   app.get("/billing-invoices", async (request) => {
@@ -559,18 +1022,101 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/audit", async (request) => {
-    const limit = z.coerce.number().min(1).max(500).default(100).parse((request.query as any)?.limit ?? 100);
+    const query = z
+      .object({
+        limit: z.coerce.number().min(1).max(500).default(100),
+        orgId: z.string().uuid().optional(),
+      })
+      .parse(request.query ?? {});
 
     const logs = await app.db.query(
       `
-      SELECT id, actor_user_id, org_id, action, entity_type, entity_id, metadata, created_at
+      SELECT id, actor_user_id, org_id, action, entity_type, entity_id, metadata, prev_hash, entry_hash, immutable, created_at
       FROM audit_logs
+      WHERE ($2::uuid IS NULL OR org_id = $2)
       ORDER BY created_at DESC
       LIMIT $1
     `,
-      [limit],
+      [query.limit, query.orgId ?? null],
     );
 
     return { audit: logs.rows };
+  });
+
+  app.get("/audit/integrity", async (request) => {
+    const query = z
+      .object({
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(5000).default(1000),
+      })
+      .parse(request.query ?? {});
+
+    const rows = await app.db.query<{
+      id: string;
+      actor_user_id: string | null;
+      org_id: string | null;
+      action: string;
+      entity_type: string;
+      entity_id: string;
+      metadata: Record<string, unknown> | null;
+      prev_hash: string | null;
+      entry_hash: string | null;
+      created_at: string;
+    }>(
+      `
+      SELECT
+        id,
+        actor_user_id,
+        org_id,
+        action,
+        entity_type,
+        entity_id,
+        metadata,
+        prev_hash,
+        entry_hash,
+        created_at
+      FROM audit_logs
+      WHERE entry_hash IS NOT NULL
+        AND ($1::uuid IS NULL OR org_id = $1)
+      ORDER BY created_at ASC, id ASC
+      LIMIT $2
+    `,
+      [query.orgId ?? null, query.limit],
+    );
+
+    let previousHash: string | null = null;
+    let validCount = 0;
+    const mismatches: Array<{ id: string; reason: string }> = [];
+
+    for (const row of rows.rows) {
+      const expected = computeAuditEntryHash({
+        actorUserId: row.actor_user_id,
+        orgId: row.org_id,
+        action: row.action,
+        entityType: row.entity_type,
+        entityId: row.entity_id,
+        metadata: row.metadata ?? undefined,
+        createdAtIso: new Date(row.created_at).toISOString(),
+        prevHash: previousHash,
+      });
+
+      if (row.prev_hash !== previousHash) {
+        mismatches.push({ id: row.id, reason: "prev_hash mismatch" });
+      } else if (row.entry_hash !== expected) {
+        mismatches.push({ id: row.id, reason: "entry_hash mismatch" });
+      } else {
+        validCount += 1;
+      }
+
+      previousHash = row.entry_hash;
+    }
+
+    return {
+      ok: mismatches.length === 0,
+      scanned: rows.rows.length,
+      valid: validCount,
+      mismatches,
+      latestHash: previousHash,
+    };
   });
 };

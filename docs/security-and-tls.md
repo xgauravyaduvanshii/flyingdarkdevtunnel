@@ -21,7 +21,9 @@
 3. Self-signed fallback for local/dev environments.
 
 ## Certificate lifecycle state (control-plane)
-- `services/worker-certificates` probes verified/routed domains on an interval and updates:
+- `services/worker-certificates` now processes cert-manager/ACME lifecycle events and updates:
+  - `certificate_lifecycle_events` queue -> `custom_domains` state sync.
+- Probe fallback still runs on interval for drift detection and updates:
   - `tls_status`,
   - `certificate_ref`,
   - `tls_not_after`,
@@ -29,12 +31,26 @@
   - `tls_last_checked_at`.
 - Current statuses in use: `pending_issue`, `pending_route`, `issued`, `expiring`, `tls_error`, `passthrough_unverified`.
 - Passthrough domains remain explicit as `passthrough_unverified` because cert ownership is upstream.
+- Cert event ingest endpoint:
+  - `POST /v1/domains/cert-events` with `x-cert-event-token`.
+- Domain-level retry controls:
+  - `cert_failure_policy`, `cert_failure_count`, `cert_next_retry_at`.
 
 ## Domain verification
 - Domain verification token is created by API.
 - Strict mode (`DOMAIN_VERIFY_STRICT=true`) checks TXT record at `_fdt-verify.<domain>`.
 
 ## Next hardening items
-- ACME issuance-event and renewal-state sync (replace probe-only signal as source of truth).
-- Renew/expiry observability and alerting.
-- Token revocation and stronger abuse controls.
+- Cert-source provenance validation and stricter cert-manager webhook trust boundaries.
+- Renew/expiry SLO alerting and paging policy automation.
+- Abuse/rate-limiting anomaly baselines and automated response tuning.
+
+## Token and abuse hardening
+- JWT access/refresh/agent tokens are issued with `jti`.
+- Revocation list (`auth_revoked_tokens`) is enforced at auth middleware.
+- Token revoke endpoint:
+  - `POST /v1/auth/token/revoke`
+- Security anomaly events (`security_anomaly_events`) track:
+  - auth failures,
+  - revoked-token activity,
+  - rate-limit bursts.

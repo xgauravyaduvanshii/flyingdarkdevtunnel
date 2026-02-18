@@ -30,9 +30,14 @@ If provider credentials or mapped plan IDs are missing, the API returns a mock c
   - uses provider APIs when keys are present, otherwise safe mock mode.
 - User finance history:
   - `GET /v1/billing/finance-events`
+- User dunning visibility:
+  - `GET /v1/billing/dunning`
 - Invoice and tax records:
   - `GET /v1/billing/invoices` (`includeTax=true` for linked tax rows)
   - `GET /v1/billing/invoices/export` (CSV export)
+- Signed runbook replay trigger:
+  - `POST /v1/billing/runbook/replay`
+  - HMAC headers: `x-fdt-runbook-timestamp`, `x-fdt-runbook-signature`
 
 ## Webhooks
 - Stripe: `POST /v1/billing/webhook/stripe` (legacy alias: `POST /v1/billing/webhook`)
@@ -56,6 +61,8 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - Worker cleanup/ops:
   - `services/worker-billing` prunes old webhook events by retention policy.
   - worker emits warning logs when failed/stale pending events cross thresholds.
+  - worker computes p95 processing latency and SLO breach counts by provider.
+  - worker exposes `/metrics` on `BILLING_METRICS_PORT` for Prometheus.
 
 ## DB mapping
 - `plans`:
@@ -78,9 +85,19 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - `billing_tax_records`:
   - tax breakdown rows per invoice (`tax_type`, `jurisdiction`, `rate_bps`, `amount_cents`)
   - export-ready tax ledger
+- `billing_dunning_cases`:
+  - staged failed-payment recovery state (`open`, `recovered`, `closed`)
+- `billing_report_exports`:
+  - scheduled finance export queue (`pending`, `running`, `completed`, `failed`)
+  - supports inline storage or webhook sink delivery
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
+
+Additional worker hardening:
+- auto-runbook replay triggers by provider/event-class when webhook failures spike,
+- dunning stage advancement + optional signed notification webhooks,
+- report export processing for queued jobs.
 
 ## Env
 - Stripe: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
@@ -90,6 +107,13 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - Webhook replay window: `BILLING_WEBHOOK_MAX_AGE_SECONDS`
 - Event retention days: `BILLING_WEBHOOK_EVENT_RETENTION_DAYS`
 - Warning threshold: `BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD`
+- Webhook latency SLO: `BILLING_WEBHOOK_SLO_SECONDS`
+- Runbook replay signing: `BILLING_RUNBOOK_SIGNING_SECRET`
+- Runbook replay limits: `BILLING_RUNBOOK_REPLAY_LIMIT`, `BILLING_RUNBOOK_REPLAY_COOLDOWN_SECONDS`
+- Dunning notifications: `BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL`, `BILLING_DUNNING_NOTIFICATION_SECRET`
+- Dunning max stage: `BILLING_DUNNING_MAX_STAGE`
+- Report exports: `BILLING_REPORT_EXPORT_BATCH_SIZE`, `BILLING_REPORT_DEFAULT_SINK_URL`, `BILLING_REPORT_SIGNING_SECRET`
+- Metrics endpoint: `BILLING_METRICS_PORT`
 
 ## Admin operations
 - Admin API:
@@ -97,11 +121,16 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - `POST /v1/admin/billing-webhooks/:id/replay`
   - `POST /v1/admin/billing-webhooks/reconcile`
   - `GET /v1/admin/billing-finance-events?provider=&type=&status=&orgId=&limit=`
+  - `GET /v1/admin/billing-dunning?provider=&status=&orgId=&limit=`
+  - `POST /v1/admin/billing-reports/exports`
+  - `GET /v1/admin/billing-reports/exports`
   - `GET /v1/admin/billing-invoices?provider=&status=&orgId=&limit=&includeTax=`
   - `GET /v1/admin/billing-invoices/export?provider=&status=&orgId=&dataset=invoices|tax&limit=`
 - Admin UI:
   - `apps/console-web/app/admin/billing-webhooks/page.tsx`
   - `apps/console-web/app/admin/billing-finance-events/page.tsx`
+  - `apps/console-web/app/admin/billing-dunning/page.tsx`
+  - `apps/console-web/app/admin/billing-reports/page.tsx`
   - `apps/console-web/app/admin/billing-invoices/page.tsx`
 
 ## Replay and reconciliation
@@ -113,3 +142,8 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - Worker can send provider-scoped warning alerts to a webhook:
   - `BILLING_ALERT_WEBHOOK_URL`
   - `BILLING_ALERT_COOLDOWN_SECONDS`
+- Prometheus alert rules in `infra/monitoring/alert-rules.yml`:
+  - `BillingWebhookP95LatencyHigh`
+  - `BillingWebhookStalePending`
+  - `BillingWebhookFailureBurst`
+- Runbook: `docs/runbooks/ops-oncall.md`

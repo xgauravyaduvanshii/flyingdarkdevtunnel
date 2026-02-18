@@ -19,17 +19,22 @@ declare module "fastify" {
         basicAuthUser: string | null;
         basicAuthPassword: string | null;
         ipAllowlist: string[];
+        region: string;
+        maxConcurrentConns: number;
       }) => Promise<string>;
       requireAuth: (request: any, reply: any) => Promise<void>;
       requireAdmin: (request: any, reply: any) => Promise<void>;
     };
-    verifyRefreshToken: (token: string) => {
+    verifyRefreshToken: (token: string) => Promise<{
       userId: string;
       orgId: string;
       role: string;
       tokenType: "refresh";
-    };
-    verifyAgentToken: (token: string) => {
+      jti?: string;
+      exp?: number;
+      iat?: number;
+    }>;
+    verifyAgentToken: (token: string) => Promise<{
       userId: string;
       orgId: string;
       tunnelId: string;
@@ -40,8 +45,13 @@ declare module "fastify" {
       basicAuthUser: string | null;
       basicAuthPassword: string | null;
       ipAllowlist: string[];
+      region: string;
+      maxConcurrentConns: number;
       tokenType: "agent";
-    };
+      jti?: string;
+      exp?: number;
+      iat?: number;
+    }>;
     audit: {
       log: (args: {
         actorUserId: string | null;
@@ -61,6 +71,7 @@ declare module "fastify" {
       orgId: string;
       role: string;
       tokenType: "access" | "refresh" | "agent";
+      jti?: string;
       tunnelId?: string;
       protocol?: "http" | "https" | "tcp";
       subdomain?: string | null;

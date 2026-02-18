@@ -3,13 +3,22 @@
 ## Scope
 Tracks TLS health and cert metadata for verified custom domains in control-plane state.
 
+Certificate state now supports two data paths:
+1. event-driven lifecycle updates from cert manager/ACME integration,
+2. probe-based fallback for drift detection.
+
+Ingress endpoint:
+- `POST /v1/domains/cert-events` (token-authenticated via `x-cert-event-token`)
+
 ## Worker
 - Service: `services/worker-certificates`
 - Loop:
-  1. Fetch verified custom domains.
-  2. If domain is unrouted: mark `pending_route`.
-  3. If routed: probe TLS handshake on `:443`.
-  4. Persist lifecycle fields on `custom_domains`.
+  1. Process pending `certificate_lifecycle_events` with retry/backoff semantics.
+  2. Apply issuance/renewal outcomes to `custom_domains`.
+  3. Optionally run TLS probe fallback on verified domains for drift visibility.
+  4. Emit expiry/error alerts with cooldown control.
+  5. Trigger signed runbook webhook events for alert-class states.
+  6. Publish Prometheus metrics at `/metrics` (default `:9465`).
 
 ## Updated fields
 - `tls_status`
@@ -17,6 +26,13 @@ Tracks TLS health and cert metadata for verified custom domains in control-plane
 - `tls_not_after`
 - `tls_last_error`
 - `tls_last_checked_at`
+- `cert_failure_policy` (`standard|strict|hold`)
+- `cert_failure_count`
+- `cert_retry_backoff_seconds`
+- `cert_next_retry_at`
+- `cert_last_event_type`
+- `cert_last_event_at`
+- `cert_renewal_due_at`
 
 ## Status semantics
 - `pending_issue`: domain verified; waiting for issuance/probe confirmation.
@@ -27,11 +43,31 @@ Tracks TLS health and cert metadata for verified custom domains in control-plane
 - `passthrough_unverified`: passthrough host (upstream-owned cert).
 
 ## Current limits
-- Signal is probe-driven, not yet ACME-event-driven.
-- Probes run on interval and process a bounded batch.
+- Event ingest token currently protects source; deeper source attestation is still pending.
+- Probes still run as fallback and process a bounded batch.
 - Multi-region cert-state aggregation is not yet implemented.
 
+## Alerts, metrics, and runbooks
+- Prometheus metrics:
+  - `fdt_cert_domains_total{status=...}`
+  - `fdt_cert_events_pending_total`
+  - `fdt_cert_events_failed_total`
+  - `fdt_cert_runbook_triggers_total`
+  - `fdt_cert_runbook_trigger_failures_total`
+- Alert rules:
+  - `CertificateLifecycleRunbookFailures`
+  - `CertificateTlsErrorsPresent`
+  - `CertificateEventBacklogGrowing`
+- Operational playbook:
+  - `docs/runbooks/ops-oncall.md`
+
+## Env
+- `CERT_RUNBOOK_WEBHOOK_URL`
+- `CERT_RUNBOOK_SIGNING_SECRET`
+- `CERT_RUNBOOK_COOLDOWN_SECONDS`
+- `CERT_METRICS_PORT`
+
 ## Next hardening
-- Integrate cert-manager/ACME issuance events and renewal state.
-- Add alerting on expiry/error thresholds.
-- Add domain-level retry/backoff policies and failure suppression windows.
+- Add source provenance verification for cert manager emitters.
+- Add renewal-SLA paging and incident playbooks.
+- Add multi-region cert-state aggregation.

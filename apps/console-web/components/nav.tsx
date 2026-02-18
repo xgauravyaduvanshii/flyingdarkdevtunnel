@@ -10,10 +10,15 @@ const links = [
   ["/domains", "Domains"],
   ["/billing", "Billing"],
   ["/admin/users", "Admin"],
+  ["/admin/members", "Team"],
+  ["/admin/sso", "SSO"],
   ["/admin/domains", "Domains Admin"],
   ["/admin/billing-webhooks", "Billing Ops"],
   ["/admin/billing-finance-events", "Finance Ops"],
+  ["/admin/billing-dunning", "Dunning Ops"],
+  ["/admin/billing-reports", "Reports Ops"],
   ["/admin/billing-invoices", "Invoices Ops"],
+  ["/admin/audit", "Audit Ops"],
 ] as const;
 
 export function TopNav() {

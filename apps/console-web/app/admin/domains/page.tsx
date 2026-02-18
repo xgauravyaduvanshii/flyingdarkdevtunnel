@@ -16,6 +16,10 @@ type AdminDomainRow = {
   tls_last_checked_at: string | null;
   tls_not_after: string | null;
   tls_last_error: string | null;
+  cert_failure_policy: "standard" | "strict" | "hold";
+  cert_failure_count: number;
+  cert_retry_backoff_seconds: number;
+  cert_next_retry_at: string | null;
   created_at: string;
 };
 
@@ -48,6 +52,9 @@ export default function AdminDomainsPage() {
             <th>Tunnel</th>
             <th>Expiry</th>
             <th>Last check</th>
+            <th>Policy</th>
+            <th>Failures</th>
+            <th>Next retry</th>
             <th>Error</th>
           </tr>
         </thead>
@@ -61,6 +68,9 @@ export default function AdminDomainsPage() {
               <td>{row.tunnel_name ?? row.target_tunnel_id ?? "-"}</td>
               <td>{row.tls_not_after ? new Date(row.tls_not_after).toLocaleString() : "-"}</td>
               <td>{row.tls_last_checked_at ? new Date(row.tls_last_checked_at).toLocaleString() : "-"}</td>
+              <td>{row.cert_failure_policy}</td>
+              <td>{row.cert_failure_count}</td>
+              <td>{row.cert_next_retry_at ? new Date(row.cert_next_retry_at).toLocaleString() : "-"}</td>
               <td style={{ maxWidth: 260, whiteSpace: "normal" }}>{row.tls_last_error ?? "-"}</td>
             </tr>
           ))}

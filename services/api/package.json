@@ -10,7 +10,7 @@
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src/lib",
-    "test:integration": "vitest run src/integration"
+    "test:integration": "pnpm --filter @fdt/config build && vitest run src/integration"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

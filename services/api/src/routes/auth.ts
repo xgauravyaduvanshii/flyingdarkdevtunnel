@@ -1,5 +1,6 @@
 import argon2 from "argon2";
-import { FastifyPluginAsync } from "fastify";
+import { FastifyInstance, FastifyPluginAsync } from "fastify";
+import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { randomToken } from "../lib/utils.js";
@@ -12,12 +13,74 @@ const registerSchema = z.object({
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8)
+  password: z.string().min(8),
+  orgId: z.string().uuid().optional(),
 });
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(10)
 });
+
+const revokeTokenSchema = z.object({
+  token: z.string().min(20).optional(),
+  tokenType: z.enum(["access", "refresh", "agent"]).optional(),
+  reason: z.string().min(2).max(500).optional(),
+});
+
+type RevocableTokenPayload = {
+  userId?: string;
+  orgId?: string;
+  tokenType?: "access" | "refresh" | "agent";
+  jti?: string;
+  exp?: number;
+};
+
+function bearerTokenFromHeaders(headers: Record<string, unknown>): string | null {
+  const raw = headers.authorization;
+  if (typeof raw !== "string") return null;
+  if (!raw.startsWith("Bearer ")) return null;
+  return raw.slice("Bearer ".length);
+}
+
+function verifyRevocableToken(
+  app: FastifyInstance,
+  token: string,
+  tokenType: "access" | "refresh" | "agent",
+): RevocableTokenPayload {
+  const secret =
+    tokenType === "access" ? app.env.JWT_SECRET : tokenType === "refresh" ? app.env.JWT_REFRESH_SECRET : app.env.AGENT_JWT_SECRET;
+  return jwt.verify(token, secret) as RevocableTokenPayload;
+}
+
+async function recordSecurityAnomaly(
+  app: FastifyInstance,
+  input: {
+    category: "auth_failed" | "token_revoked";
+    severity: "low" | "medium" | "high";
+    ip: string | null;
+    userId?: string | null;
+    orgId?: string | null;
+    route: string;
+    details?: Record<string, unknown>;
+  },
+): Promise<void> {
+  await app.db.query(
+    `
+      INSERT INTO security_anomaly_events (id, category, severity, ip, user_id, org_id, route, details)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `,
+    [
+      uuidv4(),
+      input.category,
+      input.severity,
+      input.ip,
+      input.userId ?? null,
+      input.orgId ?? null,
+      input.route,
+      input.details ?? null,
+    ],
+  );
+}
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/register", async (request, reply) => {
@@ -98,18 +161,44 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       FROM users u
       JOIN memberships m ON m.user_id = u.id
       WHERE u.email = $1
+        AND ($2::uuid IS NULL OR m.org_id = $2)
+      ORDER BY
+        CASE m.role
+          WHEN 'owner' THEN 0
+          WHEN 'admin' THEN 1
+          WHEN 'member' THEN 2
+          WHEN 'billing' THEN 3
+          ELSE 4
+        END,
+        m.created_at ASC
       LIMIT 1
     `,
-      [body.email],
+      [body.email, body.orgId ?? null],
     );
 
     const row = userRes.rows[0];
     if (!row) {
+      await recordSecurityAnomaly(app, {
+        category: "auth_failed",
+        severity: "medium",
+        ip: request.ip ?? null,
+        route: "/v1/auth/login",
+        details: { reason: "user_not_found", email: body.email },
+      });
       return reply.code(401).send({ message: "Invalid credentials" });
     }
 
     const ok = await argon2.verify(row.password_hash, body.password);
     if (!ok) {
+      await recordSecurityAnomaly(app, {
+        category: "auth_failed",
+        severity: "medium",
+        ip: request.ip ?? null,
+        userId: row.id,
+        orgId: row.org_id,
+        route: "/v1/auth/login",
+        details: { reason: "password_mismatch", email: body.email },
+      });
       return reply.code(401).send({ message: "Invalid credentials" });
     }
 
@@ -132,7 +221,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     let decoded: { userId: string; orgId: string; role: string };
     try {
-      decoded = app.verifyRefreshToken(body.refreshToken);
+      decoded = await app.verifyRefreshToken(body.refreshToken);
     } catch {
       return reply.code(401).send({ message: "Invalid refresh token" });
     }
@@ -147,6 +236,76 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post(
+    "/token/revoke",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request, reply) => {
+      const body = revokeTokenSchema.parse(request.body ?? {});
+      const fallbackToken = bearerTokenFromHeaders(request.headers as Record<string, unknown>);
+      const targetToken = body.token ?? fallbackToken;
+
+      if (!targetToken) {
+        return reply.code(400).send({ message: "Token is required" });
+      }
+
+      const decodedHint = jwt.decode(targetToken) as RevocableTokenPayload | null;
+      const tokenType = body.tokenType ?? decodedHint?.tokenType ?? "access";
+
+      let decoded: RevocableTokenPayload;
+      try {
+        decoded = verifyRevocableToken(app, targetToken, tokenType);
+      } catch {
+        return reply.code(400).send({ message: "Token verification failed" });
+      }
+
+      if (!decoded.jti) {
+        return reply.code(400).send({ message: "Token missing jti; cannot revoke" });
+      }
+
+      await app.db.query(
+        `
+        INSERT INTO auth_revoked_tokens (id, jti, token_type, user_id, org_id, expires_at, reason)
+        VALUES ($1, $2, $3, $4, $5, to_timestamp($6), $7)
+        ON CONFLICT (jti) DO NOTHING
+      `,
+        [
+          uuidv4(),
+          decoded.jti,
+          tokenType,
+          decoded.userId ?? request.authUser!.userId,
+          decoded.orgId ?? request.authUser!.orgId,
+          decoded.exp ?? null,
+          body.reason ?? "manual revoke",
+        ],
+      );
+      await recordSecurityAnomaly(app, {
+        category: "token_revoked",
+        severity: "low",
+        ip: request.ip ?? null,
+        userId: decoded.userId ?? request.authUser!.userId,
+        orgId: decoded.orgId ?? request.authUser!.orgId,
+        route: "/v1/auth/token/revoke",
+        details: { tokenType, reason: body.reason ?? null },
+      });
+
+      await app.audit.log({
+        actorUserId: request.authUser!.userId,
+        orgId: request.authUser!.orgId,
+        action: "auth.token.revoke",
+        entityType: "auth_token",
+        entityId: decoded.jti,
+        metadata: {
+          tokenType,
+          reason: body.reason ?? null,
+        },
+      });
+
+      return { ok: true, jti: decoded.jti, tokenType };
+    },
+  );
+
+  app.post(
     "/authtoken/rotate",
     {
       preHandler: app.auth.requireAuth,
@@ -157,6 +316,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       const authtokenHash = await argon2.hash(rawAuthtoken);
 
       await app.db.query(`UPDATE users SET authtoken_hash = $1 WHERE id = $2`, [authtokenHash, userId]);
+      await app.db.query(
+        `
+        INSERT INTO secret_rotations (id, actor_user_id, target_user_id, org_id, secret_type, reason, metadata)
+        VALUES ($1, $2, $3, $4, 'authtoken', $5, $6)
+      `,
+        [uuidv4(), request.authUser!.userId, userId, request.authUser!.orgId, "self-service rotation", { source: "auth.authtoken.rotate" }],
+      );
       await app.audit.log({
         actorUserId: userId,
         orgId: request.authUser!.orgId,

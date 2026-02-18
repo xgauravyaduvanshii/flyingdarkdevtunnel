@@ -61,6 +61,18 @@ type TaxRecordRow = {
   currency: string | null;
 };
 
+type DunningCase = {
+  id: string;
+  provider: BillingProvider;
+  subscription_ref: string;
+  status: "open" | "recovered" | "closed";
+  stage: number;
+  retry_count: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  updated_at: string;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 export default function BillingPage() {
@@ -70,6 +82,7 @@ export default function BillingPage() {
   const [events, setEvents] = useState<FinanceEvent[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [taxRecords, setTaxRecords] = useState<TaxRecordRow[]>([]);
+  const [dunningCases, setDunningCases] = useState<DunningCase[]>([]);
   const [paymentId, setPaymentId] = useState("");
   const [amountCents, setAmountCents] = useState("");
   const [reason, setReason] = useState("");
@@ -78,17 +91,19 @@ export default function BillingPage() {
 
   async function load() {
     try {
-      const [plansData, subscriptionData, eventsData, invoicesData] = await Promise.all([
+      const [plansData, subscriptionData, eventsData, invoicesData, dunningData] = await Promise.all([
         api<{ plans: Plan[] }>("/v1/plans"),
         api<{ subscription: SubscriptionInfo }>("/v1/billing/subscription"),
         api<{ events: FinanceEvent[] }>("/v1/billing/finance-events?limit=20"),
         api<{ invoices: InvoiceRow[]; taxRecords: TaxRecordRow[] }>("/v1/billing/invoices?limit=20&includeTax=true"),
+        api<{ cases: DunningCase[] }>("/v1/billing/dunning?limit=20"),
       ]);
       setPlans(plansData.plans);
       setSubscription(subscriptionData.subscription);
       setEvents(eventsData.events);
       setInvoices(invoicesData.invoices);
       setTaxRecords(invoicesData.taxRecords);
+      setDunningCases(dunningData.cases);
       setMessage("");
     } catch (error) {
       setMessage(`Failed loading billing data: ${String(error)}`);
@@ -298,6 +313,36 @@ export default function BillingPage() {
         <p className="muted" style={{ marginTop: 8 }}>
           Tax records: {taxRecords.length}
         </p>
+      </section>
+
+      <section className="card" style={{ gridColumn: "1 / -1" }}>
+        <h3>Dunning recovery status</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Updated</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Stage</th>
+              <th>Retries</th>
+              <th>Next attempt</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dunningCases.map((item) => (
+              <tr key={item.id}>
+                <td>{new Date(item.updated_at).toLocaleString()}</td>
+                <td>{item.provider}</td>
+                <td>{item.status}</td>
+                <td>{item.stage}</td>
+                <td>{item.retry_count}</td>
+                <td>{item.next_attempt_at ? new Date(item.next_attempt_at).toLocaleString() : "-"}</td>
+                <td style={{ maxWidth: 280, whiteSpace: "normal", wordBreak: "break-word" }}>{item.last_error ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <section className="card" style={{ gridColumn: "1 / -1" }}>

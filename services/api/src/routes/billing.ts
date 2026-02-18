@@ -56,6 +56,7 @@ type ReplayResult = {
 
 type FinanceEventType = "subscription_cancel" | "refund" | "payment_failed" | "payment_recovered";
 type FinanceEventStatus = "pending" | "processed" | "failed" | "mocked";
+type DunningStatus = "open" | "recovered" | "closed";
 
 type SubscriptionRow = {
   org_id: string;
@@ -106,6 +107,16 @@ type BillingTaxRow = {
   amount_cents: string;
   currency: string | null;
   created_at: string;
+};
+
+type DunningCaseRow = {
+  id: string;
+  org_id: string;
+  provider: CheckoutProvider;
+  subscription_ref: string;
+  status: DunningStatus;
+  stage: number;
+  retry_count: number;
 };
 
 const razorpayWebhookSchema = z
@@ -834,6 +845,139 @@ async function listTaxRecordsForInvoices(app: FastifyInstance, invoiceIds: strin
   return taxes.rows;
 }
 
+function dunningDelaySecondsForStage(stage: number): number {
+  if (stage <= 1) return 15 * 60;
+  if (stage === 2) return 60 * 60;
+  if (stage === 3) return 6 * 60 * 60;
+  if (stage === 4) return 24 * 60 * 60;
+  return 48 * 60 * 60;
+}
+
+async function upsertDunningOpenCase(
+  app: FastifyInstance,
+  input: {
+    orgId: string;
+    provider: CheckoutProvider;
+    subscriptionRef: string;
+    eventId?: string | null;
+    eventType: string;
+    payload?: unknown;
+  },
+): Promise<void> {
+  if (!input.subscriptionRef) return;
+
+  const existing = await app.db.query<DunningCaseRow>(
+    `
+      SELECT id, org_id, provider, subscription_ref, status, stage, retry_count
+      FROM billing_dunning_cases
+      WHERE org_id = $1 AND provider = $2 AND subscription_ref = $3
+      LIMIT 1
+    `,
+    [input.orgId, input.provider, input.subscriptionRef],
+  );
+
+  const nextStage = Math.min((existing.rows[0]?.status === "open" ? existing.rows[0].stage + 1 : 1), 10);
+  const retryCount = existing.rows[0] ? existing.rows[0].retry_count + 1 : 0;
+  const delaySeconds = dunningDelaySecondsForStage(nextStage);
+  const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000);
+
+  await app.db.query(
+    `
+      INSERT INTO billing_dunning_cases (
+        id,
+        org_id,
+        provider,
+        subscription_ref,
+        status,
+        stage,
+        retry_count,
+        next_attempt_at,
+        last_attempt_at,
+        latest_event_id,
+        latest_event_type,
+        payload_json,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), $8, $9, $10, NOW())
+      ON CONFLICT (org_id, provider, subscription_ref) DO UPDATE
+      SET
+        status = 'open',
+        stage = EXCLUDED.stage,
+        retry_count = EXCLUDED.retry_count,
+        next_attempt_at = EXCLUDED.next_attempt_at,
+        last_attempt_at = NOW(),
+        latest_event_id = COALESCE(EXCLUDED.latest_event_id, billing_dunning_cases.latest_event_id),
+        latest_event_type = EXCLUDED.latest_event_type,
+        payload_json = COALESCE(EXCLUDED.payload_json, billing_dunning_cases.payload_json),
+        updated_at = NOW()
+    `,
+    [
+      uuidv4(),
+      input.orgId,
+      input.provider,
+      input.subscriptionRef,
+      nextStage,
+      retryCount,
+      nextAttemptAt,
+      input.eventId ?? null,
+      input.eventType,
+      input.payload ?? null,
+    ],
+  );
+}
+
+async function upsertDunningRecoveredCase(
+  app: FastifyInstance,
+  input: {
+    orgId: string;
+    provider: CheckoutProvider;
+    subscriptionRef: string;
+    eventId?: string | null;
+    eventType: string;
+    payload?: unknown;
+  },
+): Promise<void> {
+  if (!input.subscriptionRef) return;
+
+  await app.db.query(
+    `
+      INSERT INTO billing_dunning_cases (
+        id,
+        org_id,
+        provider,
+        subscription_ref,
+        status,
+        stage,
+        retry_count,
+        next_attempt_at,
+        latest_event_id,
+        latest_event_type,
+        payload_json,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, 'recovered', 1, 0, NULL, $5, $6, $7, NOW())
+      ON CONFLICT (org_id, provider, subscription_ref) DO UPDATE
+      SET
+        status = 'recovered',
+        next_attempt_at = NULL,
+        latest_event_id = COALESCE(EXCLUDED.latest_event_id, billing_dunning_cases.latest_event_id),
+        latest_event_type = EXCLUDED.latest_event_type,
+        payload_json = COALESCE(EXCLUDED.payload_json, billing_dunning_cases.payload_json),
+        last_error = NULL,
+        updated_at = NOW()
+    `,
+    [
+      uuidv4(),
+      input.orgId,
+      input.provider,
+      input.subscriptionRef,
+      input.eventId ?? null,
+      input.eventType,
+      input.payload ?? null,
+    ],
+  );
+}
+
 async function paypalAccessToken(app: FastifyInstance): Promise<string> {
   if (!app.env.PAYPAL_CLIENT_ID || !app.env.PAYPAL_CLIENT_SECRET) {
     throw new Error("PayPal credentials are missing");
@@ -904,6 +1048,43 @@ async function verifyPaypalWebhook(
   return payload.verification_status === "SUCCESS";
 }
 
+function verifyRunbookSignature(
+  app: FastifyInstance,
+  request: FastifyRequest,
+): { ok: boolean; message?: string } {
+  if (!app.env.BILLING_RUNBOOK_SIGNING_SECRET) {
+    return { ok: false, message: "Runbook signing secret is not configured" };
+  }
+
+  const signature = headerValue(request.headers["x-fdt-runbook-signature"]);
+  const timestampRaw = headerValue(request.headers["x-fdt-runbook-timestamp"]);
+  if (!signature || !timestampRaw) {
+    return { ok: false, message: "Missing runbook signature headers" };
+  }
+
+  const timestamp = Number.parseInt(timestampRaw, 10);
+  if (!Number.isFinite(timestamp)) {
+    return { ok: false, message: "Invalid runbook timestamp" };
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSeconds - timestamp) > app.env.BILLING_RUNBOOK_MAX_AGE_SECONDS) {
+    return { ok: false, message: "Runbook signature expired" };
+  }
+
+  const rawBody = getRawBody(request);
+  const expected = crypto
+    .createHmac("sha256", app.env.BILLING_RUNBOOK_SIGNING_SECRET)
+    .update(`${timestampRaw}.${rawBody}`)
+    .digest("hex");
+
+  if (!safeHexCompare(expected, signature)) {
+    return { ok: false, message: "Invalid runbook signature" };
+  }
+
+  return { ok: true };
+}
+
 async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Promise<void> {
   if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") {
     const sub = event.data.object as Stripe.Subscription;
@@ -957,6 +1138,28 @@ async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Pr
 
       if (event.type === "invoice.finalized") {
         return;
+      }
+
+      if (subscriptionRef) {
+        if (event.type === "invoice.payment_failed") {
+          await upsertDunningOpenCase(app, {
+            orgId,
+            provider: "stripe",
+            subscriptionRef,
+            eventId: event.id,
+            eventType: event.type,
+            payload: event.data.object,
+          });
+        } else if (event.type === "invoice.paid") {
+          await upsertDunningRecoveredCase(app, {
+            orgId,
+            provider: "stripe",
+            subscriptionRef,
+            eventId: event.id,
+            eventType: event.type,
+            payload: event.data.object,
+          });
+        }
       }
 
       await recordFinanceEvent(app, {
@@ -1015,6 +1218,13 @@ async function processRazorpayWebhookPayload(
   }
 
   if (["subscription.halted", "payment.failed"].includes(payload.event)) {
+    await upsertDunningOpenCase(app, {
+      orgId,
+      provider: "razorpay",
+      subscriptionRef: entity.id,
+      eventType: payload.event,
+      payload,
+    });
     await recordFinanceEvent(app, {
       orgId,
       provider: "razorpay",
@@ -1025,6 +1235,13 @@ async function processRazorpayWebhookPayload(
       result: { eventType: payload.event },
     });
   } else if (["subscription.charged", "payment.captured"].includes(payload.event)) {
+    await upsertDunningRecoveredCase(app, {
+      orgId,
+      provider: "razorpay",
+      subscriptionRef: entity.id,
+      eventType: payload.event,
+      payload,
+    });
     await recordFinanceEvent(app, {
       orgId,
       provider: "razorpay",
@@ -1078,6 +1295,14 @@ async function processPaypalWebhookPayload(
   }
 
   if (payload.event_type === "BILLING.SUBSCRIPTION.PAYMENT.FAILED") {
+    await upsertDunningOpenCase(app, {
+      orgId,
+      provider: "paypal",
+      subscriptionRef: subscriptionId,
+      eventId: payload.id ?? null,
+      eventType: payload.event_type,
+      payload,
+    });
     await recordFinanceEvent(app, {
       orgId,
       provider: "paypal",
@@ -1089,6 +1314,14 @@ async function processPaypalWebhookPayload(
       result: { eventType: payload.event_type },
     });
   } else if (payload.event_type === "BILLING.SUBSCRIPTION.PAYMENT.COMPLETED") {
+    await upsertDunningRecoveredCase(app, {
+      orgId,
+      provider: "paypal",
+      subscriptionRef: subscriptionId,
+      eventId: payload.id ?? null,
+      eventType: payload.event_type,
+      payload,
+    });
     await recordFinanceEvent(app, {
       orgId,
       provider: "paypal",
@@ -1292,6 +1525,51 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       );
 
       return { events: events.rows };
+    },
+  );
+
+  app.get(
+    "/dunning",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request) => {
+      const query = z
+        .object({
+          status: z.enum(["open", "recovered", "closed"]).optional(),
+          provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+          limit: z.coerce.number().int().min(1).max(200).default(50),
+        })
+        .parse(request.query ?? {});
+
+      const cases = await app.db.query(
+        `
+          SELECT
+            id,
+            provider,
+            subscription_ref,
+            status,
+            stage,
+            retry_count,
+            next_attempt_at,
+            last_attempt_at,
+            notification_count,
+            last_error,
+            latest_event_id,
+            latest_event_type,
+            created_at,
+            updated_at
+          FROM billing_dunning_cases
+          WHERE org_id = $1
+            AND ($2::text IS NULL OR status = $2)
+            AND ($3::text IS NULL OR provider = $3)
+          ORDER BY updated_at DESC
+          LIMIT $4
+        `,
+        [request.authUser!.orgId, query.status ?? null, query.provider ?? null, query.limit],
+      );
+
+      return { cases: cases.rows };
     },
   );
 
@@ -1876,6 +2154,88 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       } catch (error) {
         return reply.code(502).send({ message: `PayPal checkout failed: ${String(error)}` });
       }
+    },
+  );
+
+  app.post(
+    "/runbook/replay",
+    { config: { rawBody: true } },
+    async (request, reply) => {
+      const signatureCheck = verifyRunbookSignature(app, request);
+      if (!signatureCheck.ok) {
+        const code = signatureCheck.message?.includes("configured") ? 503 : 401;
+        return reply.code(code).send({ message: signatureCheck.message ?? "Invalid runbook signature" });
+      }
+
+      const body = z
+        .object({
+          provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+          eventClass: z.enum(["all", "payment", "subscription"]).optional().default("all"),
+          limit: z.coerce.number().int().min(1).max(500).default(50),
+          force: z.boolean().optional().default(false),
+        })
+        .parse(request.body ?? {});
+
+      const rows = await app.db.query<{ id: string }>(
+        `
+          SELECT id
+          FROM billing_webhook_events
+          WHERE ($1::text IS NULL OR provider = $1)
+            AND status = 'failed'
+            AND (
+              $2::text = 'all'
+              OR (
+                $2::text = 'payment'
+                AND (
+                  provider_event_type ILIKE '%payment%'
+                  OR provider_event_type ILIKE '%invoice%'
+                )
+              )
+              OR ($2::text = 'subscription' AND provider_event_type ILIKE '%subscription%')
+            )
+          ORDER BY received_at ASC
+          LIMIT $3
+        `,
+        [body.provider ?? null, body.eventClass, body.limit],
+      );
+
+      let processed = 0;
+      let failed = 0;
+      let skipped = 0;
+      const results: ReplayResult[] = [];
+      for (const row of rows.rows) {
+        const result = await replayWebhookEventById(app, row.id, body.force);
+        results.push(result);
+        if (result.status === "processed") processed += 1;
+        else if (result.status === "failed") failed += 1;
+        else skipped += 1;
+      }
+
+      await app.audit.log({
+        actorUserId: null,
+        orgId: null,
+        action: "billing.runbook.replay",
+        entityType: "billing_webhook_event",
+        entityId: body.provider ?? "all",
+        metadata: {
+          eventClass: body.eventClass,
+          limit: body.limit,
+          force: body.force,
+          attempted: rows.rows.length,
+          processed,
+          failed,
+          skipped,
+        },
+      });
+
+      return {
+        ok: true,
+        attempted: rows.rows.length,
+        processed,
+        failed,
+        skipped,
+        results,
+      };
     },
   );
 

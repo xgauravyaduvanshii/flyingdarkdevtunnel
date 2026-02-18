@@ -1,0 +1,68 @@
+groups:
+  - name: billing-webhook-slo
+    interval: 30s
+    rules:
+      - alert: BillingWebhookP95LatencyHigh
+        expr: fdt_billing_webhook_processing_latency_seconds_p95 > fdt_billing_webhook_slo_seconds
+        for: 10m
+        labels:
+          severity: page
+          team: payments
+        annotations:
+          summary: Billing webhook p95 latency is above SLO
+          description: "provider={{ $labels.provider }} p95={{ $value }}s exceeds configured SLO"
+          runbook_url: docs/runbooks/ops-oncall.md#billing-webhook-latency
+      - alert: BillingWebhookStalePending
+        expr: fdt_billing_webhook_stale_pending > 0
+        for: 5m
+        labels:
+          severity: page
+          team: payments
+        annotations:
+          summary: Billing webhook queue has stale pending events
+          description: "provider={{ $labels.provider }} stale_pending={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#billing-stale-pending-events
+      - alert: BillingWebhookFailureBurst
+        expr: fdt_billing_webhook_failed_events_1h >= 20
+        for: 10m
+        labels:
+          severity: ticket
+          team: payments
+        annotations:
+          summary: Billing webhook failures exceeded burst threshold
+          description: "provider={{ $labels.provider }} failed_1h={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#billing-failure-burst
+
+  - name: certificate-lifecycle
+    interval: 30s
+    rules:
+      - alert: CertificateLifecycleRunbookFailures
+        expr: increase(fdt_cert_runbook_trigger_failures_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: page
+          team: edge
+        annotations:
+          summary: Certificate runbook trigger deliveries are failing
+          description: "failed_triggers_15m={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#certificate-runbook-trigger-failures
+      - alert: CertificateTlsErrorsPresent
+        expr: fdt_cert_domains_total{status="tls_error"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: edge
+        annotations:
+          summary: Domains are currently in tls_error state
+          description: "tls_error_domains={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#certificate-tls-errors
+      - alert: CertificateEventBacklogGrowing
+        expr: fdt_cert_events_pending_total > 100
+        for: 10m
+        labels:
+          severity: ticket
+          team: edge
+        annotations:
+          summary: Certificate lifecycle event backlog is growing
+          description: "pending_events={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#certificate-event-backlog

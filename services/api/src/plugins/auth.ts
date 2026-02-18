@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
+import { v4 as uuidv4 } from "uuid";
 import { HttpError } from "../lib/errors.js";
 
 type AccessPayload = {
@@ -8,6 +9,9 @@ type AccessPayload = {
   orgId: string;
   role: string;
   tokenType: "access";
+  jti?: string;
+  exp?: number;
+  iat?: number;
 };
 
 type RefreshPayload = {
@@ -15,6 +19,9 @@ type RefreshPayload = {
   orgId: string;
   role: string;
   tokenType: "refresh";
+  jti?: string;
+  exp?: number;
+  iat?: number;
 };
 
 type AgentPayload = {
@@ -28,7 +35,12 @@ type AgentPayload = {
   basicAuthUser: string | null;
   basicAuthPassword: string | null;
   ipAllowlist: string[];
+  region: string;
+  maxConcurrentConns: number;
   tokenType: "agent";
+  jti?: string;
+  exp?: number;
+  iat?: number;
 };
 
 function parseBearerToken(request: FastifyRequest): string {
@@ -40,12 +52,18 @@ function parseBearerToken(request: FastifyRequest): string {
 }
 
 const plugin: FastifyPluginAsync = async (app) => {
+  const isRevoked = async (jti: string | undefined): Promise<boolean> => {
+    if (!jti) return false;
+    const revoked = await app.db.query(`SELECT 1 FROM auth_revoked_tokens WHERE jti = $1 LIMIT 1`, [jti]);
+    return Boolean(revoked.rowCount);
+  };
+
   app.decorate("auth", {
     signAccessToken: async (payload: { userId: string; orgId: string; role: string }) => {
-      return jwt.sign({ ...payload, tokenType: "access" }, app.env.JWT_SECRET, { expiresIn: "15m" });
+      return jwt.sign({ ...payload, tokenType: "access" }, app.env.JWT_SECRET, { expiresIn: "15m", jwtid: uuidv4() });
     },
     signRefreshToken: async (payload: { userId: string; orgId: string; role: string }) => {
-      return jwt.sign({ ...payload, tokenType: "refresh" }, app.env.JWT_REFRESH_SECRET, { expiresIn: "30d" });
+      return jwt.sign({ ...payload, tokenType: "refresh" }, app.env.JWT_REFRESH_SECRET, { expiresIn: "30d", jwtid: uuidv4() });
     },
     signAgentToken: async (payload: {
       userId: string;
@@ -58,8 +76,10 @@ const plugin: FastifyPluginAsync = async (app) => {
       basicAuthUser: string | null;
       basicAuthPassword: string | null;
       ipAllowlist: string[];
+      region: string;
+      maxConcurrentConns: number;
     }) => {
-      return jwt.sign({ ...payload, tokenType: "agent" }, app.env.AGENT_JWT_SECRET, { expiresIn: "15m" });
+      return jwt.sign({ ...payload, tokenType: "agent" }, app.env.AGENT_JWT_SECRET, { expiresIn: "15m", jwtid: uuidv4() });
     },
     requireAuth: async (request: FastifyRequest) => {
       let decoded: AccessPayload;
@@ -73,6 +93,9 @@ const plugin: FastifyPluginAsync = async (app) => {
       if (decoded.tokenType !== "access") {
         throw new HttpError(401, "Invalid token type");
       }
+      if (await isRevoked(decoded.jti)) {
+        throw new HttpError(401, "Token revoked");
+      }
 
       request.authUser = decoded;
     },
@@ -84,12 +107,26 @@ const plugin: FastifyPluginAsync = async (app) => {
     },
   });
 
-  app.decorate("verifyRefreshToken", (token: string): RefreshPayload => {
-    return jwt.verify(token, app.env.JWT_REFRESH_SECRET) as RefreshPayload;
+  app.decorate("verifyRefreshToken", async (token: string): Promise<RefreshPayload> => {
+    const decoded = jwt.verify(token, app.env.JWT_REFRESH_SECRET) as RefreshPayload;
+    if (decoded.tokenType !== "refresh") {
+      throw new HttpError(401, "Invalid token type");
+    }
+    if (await isRevoked(decoded.jti)) {
+      throw new HttpError(401, "Refresh token revoked");
+    }
+    return decoded;
   });
 
-  app.decorate("verifyAgentToken", (token: string): AgentPayload => {
-    return jwt.verify(token, app.env.AGENT_JWT_SECRET) as AgentPayload;
+  app.decorate("verifyAgentToken", async (token: string): Promise<AgentPayload> => {
+    const decoded = jwt.verify(token, app.env.AGENT_JWT_SECRET) as AgentPayload;
+    if (decoded.tokenType !== "agent") {
+      throw new HttpError(401, "Invalid token type");
+    }
+    if (await isRevoked(decoded.jti)) {
+      throw new HttpError(401, "Agent token revoked");
+    }
+    return decoded;
   });
 };
 
