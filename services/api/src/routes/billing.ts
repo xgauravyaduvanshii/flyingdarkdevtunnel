@@ -1478,6 +1478,101 @@ export async function reconcileFailedWebhookEvents(
 }
 
 export const billingRoutes: FastifyPluginAsync = async (app) => {
+  app.post("/reports/exports/:id/ack", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params ?? {});
+    const body = z
+      .object({
+        sinkRef: z.string().max(500).optional(),
+        metadata: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const providedToken = headerValue(request.headers["x-fdt-report-ack-token"])?.trim();
+    if (!providedToken) {
+      return reply.code(401).send({ message: "Missing report ACK token" });
+    }
+
+    const row = await app.db.query<{
+      id: string;
+      org_id: string | null;
+      status: "pending" | "running" | "completed" | "failed";
+      delivery_ack_status: "not_required" | "pending" | "acknowledged" | "expired";
+      delivery_ack_token_hash: string | null;
+      delivery_ack_deadline: Date | null;
+    }>(
+      `
+      SELECT
+        id,
+        org_id,
+        status,
+        delivery_ack_status,
+        delivery_ack_token_hash,
+        delivery_ack_deadline
+      FROM billing_report_exports
+      WHERE id = $1
+      LIMIT 1
+    `,
+      [params.id],
+    );
+    if (!row.rowCount || !row.rows[0]) {
+      return reply.code(404).send({ message: "Report export not found" });
+    }
+    const exportRow = row.rows[0];
+
+    if (exportRow.status !== "completed") {
+      return reply.code(409).send({ message: "Report export is not completed yet" });
+    }
+    if (exportRow.delivery_ack_status === "acknowledged") {
+      return { ok: true, id: params.id, alreadyAcknowledged: true };
+    }
+    if (exportRow.delivery_ack_status !== "pending" || !exportRow.delivery_ack_token_hash) {
+      return reply.code(409).send({ message: "Report export does not require pending acknowledgement" });
+    }
+    if (exportRow.delivery_ack_deadline && exportRow.delivery_ack_deadline.getTime() <= Date.now()) {
+      return reply.code(410).send({ message: "Report acknowledgement deadline has expired" });
+    }
+
+    const providedHash = sha256Hex(providedToken);
+    if (!safeHexCompare(exportRow.delivery_ack_token_hash, providedHash)) {
+      return reply.code(401).send({ message: "Invalid report ACK token" });
+    }
+
+    const ackMetadata = {
+      acknowledgedAt: new Date().toISOString(),
+      sinkRef: body.sinkRef ?? null,
+      metadata: body.metadata ?? null,
+    };
+
+    await app.db.query(
+      `
+      UPDATE billing_report_exports
+      SET
+        delivery_ack_status = 'acknowledged',
+        delivery_ack_at = NOW(),
+        delivery_ack_token_hash = NULL,
+        delivery_ack_deadline = NULL,
+        delivery_ack_metadata = COALESCE(delivery_ack_metadata, '{}'::jsonb) || $2::jsonb,
+        last_delivery_status = 'acknowledged',
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+      [params.id, ackMetadata],
+    );
+
+    await app.audit.log({
+      actorUserId: null,
+      orgId: exportRow.org_id,
+      action: "billing.report.export.ack",
+      entityType: "billing_report_export",
+      entityId: params.id,
+      metadata: {
+        sinkRef: body.sinkRef ?? null,
+      },
+    });
+
+    return { ok: true, id: params.id };
+  });
+
   app.get(
     "/subscription",
     {

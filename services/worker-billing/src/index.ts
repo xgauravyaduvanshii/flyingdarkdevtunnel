@@ -39,6 +39,13 @@ const envSchema = z.object({
   BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(12),
   BILLING_REPORT_RETRY_SCHEDULE_SECONDS: z.string().optional().default("60,300,900,1800,3600"),
   BILLING_REPORT_RUNNING_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
+  BILLING_REPORT_ACK_ENABLED: z
+    .string()
+    .optional()
+    .default("true")
+    .transform((value) => value.trim().toLowerCase() !== "false"),
+  BILLING_REPORT_ACK_REQUIRED_DESTINATIONS: z.string().optional().default("webhook,warehouse"),
+  BILLING_REPORT_ACK_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   BILLING_REPORT_DEFAULT_SINK_URL: z.string().url().optional(),
   BILLING_REPORT_WAREHOUSE_SINK_URL: z.string().url().optional(),
   BILLING_REPORT_SIGNING_SECRET: z.string().optional(),
@@ -70,6 +77,8 @@ let s3Client: S3Client | null = null;
 
 type BillingProvider = "stripe" | "razorpay" | "paypal";
 type DunningChannel = "webhook" | "email" | "slack";
+type ReportDestination = "inline" | "webhook" | "s3" | "warehouse";
+type AckRequiredDestination = Exclude<ReportDestination, "inline">;
 type WebhookHealthSummary = {
   failed1h: number;
   failed24h: number;
@@ -86,6 +95,7 @@ const dunningSchedules: Record<BillingProvider, number[]> = {
   paypal: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_PAYPAL, [30 * 60, 4 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60, 72 * 60 * 60]),
 };
 const reportRetrySchedule = parseDunningSchedule(env.BILLING_REPORT_RETRY_SCHEDULE_SECONDS, [60, 300, 900, 1800, 3600]);
+const reportAckRequiredDestinations = parseAckDestinationList(env.BILLING_REPORT_ACK_REQUIRED_DESTINATIONS);
 let webhookMetricsGeneratedAt = Date.now();
 let webhookHealthByProvider: Record<BillingProvider, WebhookHealthSummary> = {
   stripe: { failed1h: 0, failed24h: 0, stalePending: 0, p95LatencySeconds: 0, processed1h: 0, sloViolationCount1h: 0 },
@@ -134,6 +144,18 @@ function parseDunningSchedule(raw: string, fallback: number[]): number[] {
     .map((value) => Number.parseInt(value.trim(), 10))
     .filter((value) => Number.isFinite(value) && value > 0);
   return parsed.length > 0 ? parsed : fallback;
+}
+
+function parseAckDestinationList(raw: string): Set<AckRequiredDestination> {
+  const values = raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item): item is AckRequiredDestination => item === "webhook" || item === "warehouse" || item === "s3");
+  return new Set(values);
+}
+
+function destinationRequiresAck(destination: ReportDestination): boolean {
+  return env.BILLING_REPORT_ACK_ENABLED && destination !== "inline" && reportAckRequiredDestinations.has(destination);
 }
 
 function parseNotificationChannels(input: unknown): DunningChannel[] {
@@ -992,11 +1014,35 @@ async function processReportExports(): Promise<void> {
     [env.BILLING_REPORT_RUNNING_TIMEOUT_SECONDS],
   );
 
+  await db.query(
+    `
+      UPDATE billing_report_exports
+      SET
+        delivery_ack_status = 'expired',
+        delivery_ack_token_hash = NULL,
+        delivery_ack_deadline = NULL,
+        delivery_ack_metadata = COALESCE(delivery_ack_metadata, '{}'::jsonb) || jsonb_build_object(
+          'expiredAt', NOW(),
+          'reason', 'ack_timeout'
+        ),
+        last_delivery_status = CASE
+          WHEN last_delivery_status = 'acknowledged' THEN last_delivery_status
+          ELSE 'ack_expired'
+        END,
+        error = COALESCE(error, 'delivery acknowledgement expired'),
+        updated_at = NOW()
+      WHERE status = 'completed'
+        AND delivery_ack_status = 'pending'
+        AND delivery_ack_deadline IS NOT NULL
+        AND delivery_ack_deadline <= NOW()
+    `,
+  );
+
   const jobs = await db.query<{
     id: string;
     org_id: string | null;
     dataset: "finance_events" | "invoices" | "dunning";
-    destination: "inline" | "webhook" | "s3" | "warehouse";
+    destination: ReportDestination;
     sink_url: string | null;
     payload_json: unknown;
     attempts: number;
@@ -1033,6 +1079,17 @@ async function processReportExports(): Promise<void> {
       const report = await buildReportCsv(job.dataset, job.org_id ?? null);
       const contentHash = crypto.createHash("sha256").update(report.csv).digest("hex");
       const payloadJson = (job.payload_json ?? {}) as Record<string, unknown>;
+      const ackRequired = destinationRequiresAck(job.destination);
+      const ackToken = ackRequired ? crypto.randomBytes(24).toString("hex") : null;
+      const ackTokenHash = ackToken ? crypto.createHash("sha256").update(ackToken).digest("hex") : null;
+      const ackDeadline = ackRequired ? new Date(Date.now() + env.BILLING_REPORT_ACK_TTL_SECONDS * 1000) : null;
+      const ackStatus: "pending" | "not_required" = ackRequired ? "pending" : "not_required";
+      const ackMetadataBase = ackRequired
+        ? {
+            issuedAt: new Date().toISOString(),
+            destination: job.destination,
+          }
+        : null;
 
       if (job.destination === "webhook" || job.destination === "warehouse") {
         const sinkUrl =
@@ -1052,6 +1109,10 @@ async function processReportExports(): Promise<void> {
               "x-fdt-report-id": job.id,
               "x-fdt-report-dataset": job.dataset,
             };
+            if (ackRequired && ackToken && ackDeadline) {
+              headers["x-fdt-report-ack-token"] = ackToken;
+              headers["x-fdt-report-ack-deadline"] = ackDeadline.toISOString();
+            }
             if (env.BILLING_REPORT_SIGNING_SECRET) {
               const ts = `${Math.floor(Date.now() / 1000)}`;
               headers["x-fdt-timestamp"] = ts;
@@ -1084,6 +1145,10 @@ async function processReportExports(): Promise<void> {
               "x-fdt-report-dataset": job.dataset,
               "x-fdt-report-format": "csv",
             };
+            if (ackRequired && ackToken && ackDeadline) {
+              headers["x-fdt-report-ack-token"] = ackToken;
+              headers["x-fdt-report-ack-deadline"] = ackDeadline.toISOString();
+            }
             if (env.BILLING_REPORT_SIGNING_SECRET) {
               const ts = `${Math.floor(Date.now() / 1000)}`;
               headers["x-fdt-timestamp"] = ts;
@@ -1115,12 +1180,17 @@ async function processReportExports(): Promise<void> {
               content_hash = $3,
               content_text = NULL,
               sink_url = $4,
-              last_delivery_status = 'delivered',
+              delivery_ack_status = $5,
+              delivery_ack_token_hash = $6,
+              delivery_ack_deadline = $7,
+              delivery_ack_at = NULL,
+              delivery_ack_metadata = $8,
+              last_delivery_status = CASE WHEN $5 = 'pending' THEN 'delivered_pending_ack' ELSE 'delivered' END,
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
           `,
-          [job.id, report.rowCount, contentHash, sinkUrl],
+          [job.id, report.rowCount, contentHash, sinkUrl, ackStatus, ackTokenHash, ackDeadline, ackMetadataBase],
         );
       } else if (job.destination === "s3") {
         if (!env.BILLING_REPORT_S3_BUCKET) {
@@ -1138,10 +1208,25 @@ async function processReportExports(): Promise<void> {
             Key: key,
             Body: report.csv,
             ContentType: "text/csv; charset=utf-8",
+            Metadata:
+              ackRequired && ackToken && ackDeadline
+                ? {
+                    fdt_report_ack_token: ackToken,
+                    fdt_report_ack_deadline: ackDeadline.toISOString(),
+                    fdt_report_id: job.id,
+                    fdt_report_dataset: job.dataset,
+                  }
+                : undefined,
           }),
         );
 
         const sinkRef = `s3://${env.BILLING_REPORT_S3_BUCKET}/${key}`;
+        const ackMetadata = ackMetadataBase
+          ? {
+              ...ackMetadataBase,
+              sinkRef,
+            }
+          : null;
         await db.query(
           `
             UPDATE billing_report_exports
@@ -1153,12 +1238,17 @@ async function processReportExports(): Promise<void> {
               content_hash = $3,
               content_text = NULL,
               sink_url = $4,
-              last_delivery_status = 'delivered',
+              delivery_ack_status = $5,
+              delivery_ack_token_hash = $6,
+              delivery_ack_deadline = $7,
+              delivery_ack_at = NULL,
+              delivery_ack_metadata = $8,
+              last_delivery_status = CASE WHEN $5 = 'pending' THEN 'delivered_pending_ack' ELSE 'delivered' END,
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
           `,
-          [job.id, report.rowCount, contentHash, sinkRef],
+          [job.id, report.rowCount, contentHash, sinkRef, ackStatus, ackTokenHash, ackDeadline, ackMetadata],
         );
       } else {
         await db.query(
@@ -1171,6 +1261,11 @@ async function processReportExports(): Promise<void> {
               row_count = $2,
               content_hash = $3,
               content_text = $4,
+              delivery_ack_status = 'not_required',
+              delivery_ack_token_hash = NULL,
+              delivery_ack_deadline = NULL,
+              delivery_ack_at = NULL,
+              delivery_ack_metadata = NULL,
               last_delivery_status = 'delivered',
               error = NULL,
               updated_at = NOW()
@@ -1190,6 +1285,9 @@ async function processReportExports(): Promise<void> {
               status = 'failed',
               completed_at = NOW(),
               next_attempt_at = NULL,
+              delivery_ack_status = CASE WHEN delivery_ack_status = 'acknowledged' THEN delivery_ack_status ELSE 'expired' END,
+              delivery_ack_token_hash = NULL,
+              delivery_ack_deadline = NULL,
               last_delivery_status = 'exhausted',
               error = $2,
               updated_at = NOW()
@@ -1207,6 +1305,10 @@ async function processReportExports(): Promise<void> {
               status = 'pending',
               completed_at = NULL,
               next_attempt_at = $2,
+              delivery_ack_status = 'not_required',
+              delivery_ack_token_hash = NULL,
+              delivery_ack_deadline = NULL,
+              delivery_ack_at = NULL,
               last_delivery_status = 'retry_scheduled',
               error = $3,
               updated_at = NOW()

@@ -407,6 +407,75 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { regions: summary.rows };
   });
 
+  app.get("/domains/cert-replication", async (request) => {
+    const query = z
+      .object({
+        orgId: z.string().uuid().optional(),
+        sourceRegion: z.string().min(2).max(20).optional(),
+        targetRegion: z.string().min(2).max(20).optional(),
+        state: z.enum(["source", "replicated", "stale"]).optional(),
+        limit: z.coerce.number().int().min(1).max(1000).default(500),
+      })
+      .parse(request.query ?? {});
+
+    const replicas = await app.db.query(
+      `
+      SELECT
+        r.id,
+        r.domain_id,
+        r.domain,
+        d.org_id,
+        r.source_region,
+        r.target_region,
+        r.tls_mode,
+        r.tls_status,
+        r.replication_state,
+        r.lag_seconds,
+        r.certificate_ref,
+        r.tls_not_after,
+        r.renewal_due_at,
+        r.cert_last_event_at,
+        r.synced_at,
+        r.updated_at
+      FROM cert_region_replicas r
+      JOIN custom_domains d ON d.id = r.domain_id
+      WHERE ($1::uuid IS NULL OR d.org_id = $1)
+        AND ($2::text IS NULL OR r.source_region = LOWER($2))
+        AND ($3::text IS NULL OR r.target_region = LOWER($3))
+        AND ($4::text IS NULL OR r.replication_state = $4)
+      ORDER BY r.synced_at DESC, r.domain ASC
+      LIMIT $5
+    `,
+      [query.orgId ?? null, query.sourceRegion ?? null, query.targetRegion ?? null, query.state ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      source: string;
+      replicated: string;
+      stale: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE r.replication_state = 'source')::text AS source,
+        COUNT(*) FILTER (WHERE r.replication_state = 'replicated')::text AS replicated,
+        COUNT(*) FILTER (WHERE r.replication_state = 'stale')::text AS stale
+      FROM cert_region_replicas r
+      JOIN custom_domains d ON d.id = r.domain_id
+      WHERE ($1::uuid IS NULL OR d.org_id = $1)
+        AND ($2::text IS NULL OR r.source_region = LOWER($2))
+        AND ($3::text IS NULL OR r.target_region = LOWER($3))
+    `,
+      [query.orgId ?? null, query.sourceRegion ?? null, query.targetRegion ?? null],
+    );
+
+    return {
+      replicas: replicas.rows,
+      stats: stats.rows[0] ?? { total: "0", source: "0", replicated: "0", stale: "0" },
+    };
+  });
+
   app.get("/security-anomalies", async (request) => {
     const query = z
       .object({
@@ -1534,6 +1603,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         attempts,
         max_attempts,
         last_delivery_status,
+        delivery_ack_status,
+        delivery_ack_deadline,
+        delivery_ack_at,
+        delivery_ack_metadata,
         started_at,
         completed_at,
         row_count,
@@ -1660,6 +1733,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         started_at = NULL,
         completed_at = NULL,
         error = NULL,
+        delivery_ack_status = 'not_required',
+        delivery_ack_token_hash = NULL,
+        delivery_ack_deadline = NULL,
+        delivery_ack_at = NULL,
         last_delivery_status = 'reconciled',
         attempts = CASE WHEN $2 THEN 0 ELSE attempts END,
         updated_at = NOW()
@@ -1683,6 +1760,89 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         attempted: ids.length,
         replayed: updated.rowCount ?? 0,
         resetAttempts: body.resetAttempts,
+      },
+    });
+
+    return {
+      ok: true,
+      attempted: ids.length,
+      replayed: updated.rowCount ?? 0,
+      ids: updated.rows.map((row) => row.id),
+    };
+  });
+
+  app.post("/billing-reports/exports/ack-reconcile", async (request) => {
+    const body = z
+      .object({
+        ackStatus: z.enum(["pending", "expired"]).optional().default("pending"),
+        onlyPastDeadline: z.coerce.boolean().optional().default(true),
+        dataset: z.enum(["finance_events", "invoices", "dunning"]).optional(),
+        destination: z.enum(["inline", "webhook", "s3", "warehouse"]).optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(1000).default(200),
+      })
+      .parse(request.body ?? {});
+
+    const candidates = await app.db.query<{ id: string }>(
+      `
+      SELECT id
+      FROM billing_report_exports
+      WHERE delivery_ack_status = $1
+        AND ($2::boolean = FALSE OR (delivery_ack_deadline IS NOT NULL AND delivery_ack_deadline <= NOW()))
+        AND ($3::text IS NULL OR dataset = $3)
+        AND ($4::text IS NULL OR destination = $4)
+        AND ($5::uuid IS NULL OR org_id = $5)
+      ORDER BY COALESCE(delivery_ack_deadline, completed_at, updated_at, created_at) ASC
+      LIMIT $6
+    `,
+      [body.ackStatus, body.onlyPastDeadline, body.dataset ?? null, body.destination ?? null, body.orgId ?? null, body.limit],
+    );
+
+    const ids = candidates.rows.map((row) => row.id);
+    if (ids.length === 0) {
+      return { ok: true, attempted: 0, replayed: 0, ids: [] };
+    }
+
+    const updated = await app.db.query<{ id: string }>(
+      `
+      UPDATE billing_report_exports
+      SET
+        status = 'pending',
+        next_attempt_at = NOW(),
+        started_at = NULL,
+        completed_at = NULL,
+        delivery_ack_status = 'expired',
+        delivery_ack_token_hash = NULL,
+        delivery_ack_deadline = NULL,
+        delivery_ack_at = NULL,
+        delivery_ack_metadata = COALESCE(delivery_ack_metadata, '{}'::jsonb) || jsonb_build_object(
+          'reconciledAt', NOW(),
+          'reconciledBy', $2::text,
+          'reason', 'ack_reconcile'
+        ),
+        last_delivery_status = 'ack_reconciled',
+        error = COALESCE(error, 'delivery ack missing; export requeued'),
+        updated_at = NOW()
+      WHERE id = ANY($1::uuid[])
+      RETURNING id
+    `,
+      [ids, request.authUser!.userId],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_report.export.ack_reconcile",
+      entityType: "billing_report_export",
+      entityId: "bulk",
+      metadata: {
+        ackStatus: body.ackStatus,
+        onlyPastDeadline: body.onlyPastDeadline,
+        dataset: body.dataset ?? null,
+        destination: body.destination ?? null,
+        orgId: body.orgId ?? null,
+        attempted: ids.length,
+        replayed: updated.rowCount ?? 0,
       },
     });
 

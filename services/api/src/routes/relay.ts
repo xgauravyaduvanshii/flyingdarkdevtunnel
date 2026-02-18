@@ -1,4 +1,4 @@
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
@@ -15,9 +15,10 @@ function relayTokenFromHeaders(headers: Record<string, unknown>): string | null 
 }
 
 export const relayRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/heartbeat", async (request, reply) => {
+  async function requireRelayToken(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
     if (!app.env.RELAY_HEARTBEAT_TOKEN) {
-      return reply.code(503).send({ message: "Relay heartbeat token is not configured" });
+      await reply.code(503).send({ message: "Relay heartbeat token is not configured" });
+      return false;
     }
 
     const providedToken = relayTokenFromHeaders(request.headers as Record<string, unknown>);
@@ -25,12 +26,20 @@ export const relayRoutes: FastifyPluginAsync = async (app) => {
       await app.db.query(
         `
           INSERT INTO security_anomaly_events (id, category, severity, ip, route, details)
-          VALUES ($1, 'auth_failed', 'high', $2, '/v1/relay/heartbeat', $3)
+          VALUES ($1, 'auth_failed', 'high', $2, $3, $4)
         `,
-        [uuidv4(), request.ip ?? null, { reason: "invalid_relay_heartbeat_token" }],
+        [uuidv4(), request.ip ?? null, request.url ?? "/v1/relay", { reason: "invalid_relay_heartbeat_token" }],
       );
-      return reply.code(401).send({ message: "Invalid relay heartbeat token" });
+      await reply.code(401).send({ message: "Invalid relay heartbeat token" });
+      return false;
     }
+
+    return true;
+  }
+
+  app.post("/heartbeat", async (request, reply) => {
+    const ok = await requireRelayToken(request, reply);
+    if (!ok) return;
 
     const body = z
       .object({
@@ -88,6 +97,50 @@ export const relayRoutes: FastifyPluginAsync = async (app) => {
       region: body.region.toLowerCase(),
       status: body.status,
       receivedAt: new Date().toISOString(),
+    };
+  });
+
+  app.get("/cert-replication", async (request, reply) => {
+    const ok = await requireRelayToken(request, reply);
+    if (!ok) return;
+
+    const query = z
+      .object({
+        region: z.string().min(2).max(20),
+        includeStale: z.coerce.boolean().optional().default(false),
+        limit: z.coerce.number().int().min(1).max(5000).default(2000),
+      })
+      .parse(request.query ?? {});
+
+    const rows = await app.db.query(
+      `
+        SELECT
+          domain,
+          source_region,
+          target_region,
+          tls_mode,
+          tls_status,
+          replication_state,
+          lag_seconds,
+          certificate_ref,
+          tls_not_after,
+          renewal_due_at,
+          cert_last_event_at,
+          synced_at
+        FROM cert_region_replicas
+        WHERE target_region = LOWER($1)
+          AND ($2::boolean = TRUE OR replication_state <> 'stale')
+        ORDER BY synced_at DESC, domain ASC
+        LIMIT $3
+      `,
+      [query.region, query.includeStale, query.limit],
+    );
+
+    return {
+      region: query.region.toLowerCase(),
+      includeStale: query.includeStale,
+      replicas: rows.rows,
+      generatedAt: new Date().toISOString(),
     };
   });
 };

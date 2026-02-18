@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
@@ -623,13 +623,90 @@ describe("api integration", () => {
     });
     expect(reportListRes.statusCode).toBe(200);
     const reportListBody = reportListRes.json() as {
-      exports: Array<{ id: string; dataset: string; status: string; max_attempts: number }>;
+      exports: Array<{
+        id: string;
+        dataset: string;
+        status: string;
+        max_attempts: number;
+        delivery_ack_status: "not_required" | "pending" | "acknowledged" | "expired";
+      }>;
     };
     expect(
       reportListBody.exports.some(
         (job) => job.id === reportCreateBody.id && job.dataset === "finance_events" && job.max_attempts === 7,
       ),
     ).toBe(true);
+
+    const ackToken = `ack_${randomUUID().replace(/-/g, "")}`;
+    const ackTokenHash = createHash("sha256").update(ackToken).digest("hex");
+    await app.db.query(
+      `
+        UPDATE billing_report_exports
+        SET
+          status = 'completed',
+          completed_at = NOW(),
+          delivery_ack_status = 'pending',
+          delivery_ack_token_hash = $2,
+          delivery_ack_deadline = NOW() + INTERVAL '1 hour',
+          last_delivery_status = 'delivered_pending_ack'
+        WHERE id = $1
+      `,
+      [reportCreateBody.id, ackTokenHash],
+    );
+
+    const ackRes = await app.inject({
+      method: "POST",
+      url: `/v1/billing/reports/exports/${reportCreateBody.id}/ack`,
+      headers: { "x-fdt-report-ack-token": ackToken },
+      payload: {
+        sinkRef: "warehouse://integration/exports",
+        metadata: { source: "integration_test" },
+      },
+    });
+    expect(ackRes.statusCode).toBe(200);
+    const ackBody = ackRes.json() as { ok: boolean; id: string };
+    expect(ackBody.ok).toBe(true);
+    expect(ackBody.id).toBe(reportCreateBody.id);
+
+    const ackRow = await app.db.query<{ delivery_ack_status: string; delivery_ack_at: Date | null }>(
+      `SELECT delivery_ack_status, delivery_ack_at FROM billing_report_exports WHERE id = $1 LIMIT 1`,
+      [reportCreateBody.id],
+    );
+    expect(ackRow.rows[0]?.delivery_ack_status).toBe("acknowledged");
+    expect(ackRow.rows[0]?.delivery_ack_at).toBeTruthy();
+
+    await app.db.query(
+      `
+        UPDATE billing_report_exports
+        SET
+          status = 'completed',
+          completed_at = NOW(),
+          delivery_ack_status = 'pending',
+          delivery_ack_token_hash = 'deadbeef',
+          delivery_ack_deadline = NOW() - INTERVAL '5 minutes',
+          last_delivery_status = 'delivered_pending_ack'
+        WHERE id = $1
+      `,
+      [reportCreateBody.id],
+    );
+
+    const ackReconcileRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/billing-reports/exports/ack-reconcile",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { ackStatus: "pending", onlyPastDeadline: true, limit: 20 },
+    });
+    expect(ackReconcileRes.statusCode).toBe(200);
+    const ackReconcileBody = ackReconcileRes.json() as { attempted: number; replayed: number };
+    expect(ackReconcileBody.attempted).toBeGreaterThan(0);
+    expect(ackReconcileBody.replayed).toBeGreaterThan(0);
+
+    const ackReconciledRow = await app.db.query<{ status: string; delivery_ack_status: string }>(
+      `SELECT status, delivery_ack_status FROM billing_report_exports WHERE id = $1 LIMIT 1`,
+      [reportCreateBody.id],
+    );
+    expect(ackReconciledRow.rows[0]?.status).toBe("pending");
+    expect(ackReconciledRow.rows[0]?.delivery_ack_status).toBe("expired");
 
     await app.db.query(`UPDATE billing_report_exports SET status = 'failed', attempts = 2, error = 'integration failed' WHERE id = $1`, [
       reportCreateBody.id,
@@ -1219,6 +1296,7 @@ describe("api integration", () => {
     });
     expect(registerRes.statusCode).toBe(201);
     const registerBody = registerRes.json() as { accessToken: string; authtoken: string };
+    const registerClaims = jwt.verify(registerBody.accessToken, process.env.JWT_SECRET!) as { orgId: string };
 
     const tunnelRes = await app.inject({
       method: "POST",
@@ -1288,6 +1366,44 @@ describe("api integration", () => {
     expect(adminEdges.statusCode).toBe(200);
     const adminEdgesBody = adminEdges.json() as { edges: Array<{ edge_id: string }> };
     expect(adminEdgesBody.edges.some((edge) => edge.edge_id === "eu-edge-integration-1")).toBe(true);
+
+    const replicaDomainId = randomUUID();
+    const replicaDomain = `relay-replica-${randomUUID().slice(0, 8)}.example.com`;
+    await app.db.query(
+      `
+        INSERT INTO custom_domains
+          (id, org_id, domain, verification_token, verified, tls_status, tls_mode)
+        VALUES
+          ($1, $2, $3, $4, TRUE, 'issued', 'termination')
+      `,
+      [replicaDomainId, registerClaims.orgId, replicaDomain, randomUUID().slice(0, 12)],
+    );
+    await app.db.query(
+      `
+        INSERT INTO cert_region_replicas
+          (id, domain_id, domain, source_region, target_region, tls_mode, tls_status, replication_state, lag_seconds, synced_at)
+        VALUES
+          ($1, $2, $3, 'eu', 'eu', 'termination', 'issued', 'source', 0, NOW())
+      `,
+      [randomUUID(), replicaDomainId, replicaDomain],
+    );
+
+    const relayCertReplicationRes = await app.inject({
+      method: "GET",
+      url: "/v1/relay/cert-replication?region=eu&limit=20",
+      headers: {
+        authorization: `Bearer ${process.env.RELAY_HEARTBEAT_TOKEN!}`,
+      },
+    });
+    expect(relayCertReplicationRes.statusCode).toBe(200);
+    const relayCertReplicationBody = relayCertReplicationRes.json() as {
+      region: string;
+      replicas: Array<{ target_region: string; replication_state: string }>;
+    };
+    expect(relayCertReplicationBody.region).toBe("eu");
+    expect(
+      relayCertReplicationBody.replicas.some((row) => row.target_region === "eu" && row.replication_state === "source"),
+    ).toBe(true);
   }, 30_000);
 
   it("blocks login attempts from IPs with high abuse signals", async () => {
