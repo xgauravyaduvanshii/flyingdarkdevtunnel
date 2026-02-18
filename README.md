@@ -52,54 +52,16 @@ It is designed for:
 
 ### High-level topology
 
-```mermaid
-flowchart LR
-  Internet[Public Internet] --> Relay[Go Relay Edge]
-  Relay --> Agent[Go Agent CLI / Daemon]
-  Agent --> Local[Local Service]
-
-  Console[Next.js Console/Admin] --> API[Fastify Control Plane API]
-  API --> Postgres[(PostgreSQL)]
-  API --> Redis[(Redis)]
-  API --> S3[(S3/MinIO)]
-
-  WorkerBilling[worker-billing] --> API
-  WorkerInspector[worker-inspector] --> API
-  WorkerCert[worker-certificates] --> API
-```
+![Architecture Topology](docs/assets/architecture-topology.svg)
 
 ### Request flow (HTTP tunnel)
 
 ![Tunnel Flow](docs/assets/tunnel-flow.svg)
-
-```mermaid
-sequenceDiagram
-  participant U as End User
-  participant R as Relay
-  participant A as Agent
-  participant L as Local App
-
-  U->>R: HTTPS request to public hostname
-  R->>R: Policy checks (auth/IP/host mode/concurrency)
-  R->>A: Forward over active control/data session
-  A->>L: Send request to local target
-  L-->>A: Response
-  A-->>R: Return response stream
-  R-->>U: Final response
-```
+![Tunnel Sequence](docs/assets/tunnel-sequence.svg)
 
 ### Control-plane tunnel lifecycle
 
-```mermaid
-flowchart TD
-  Login[User Login] --> CreateTunnel[Create Tunnel via API]
-  CreateTunnel --> StartTunnel[Start Tunnel]
-  StartTunnel --> TokenIssue[API issues short-lived agent token]
-  TokenIssue --> AgentConnect[Agent connects to Relay control socket]
-  AgentConnect --> Active[Traffic becomes routable]
-  Active --> Inspect[Request inspection + replay optional]
-  Active --> Stop[Stop/Delete tunnel]
-```
+![Control Plane Lifecycle](docs/assets/control-plane-lifecycle.svg)
 
 ---
 

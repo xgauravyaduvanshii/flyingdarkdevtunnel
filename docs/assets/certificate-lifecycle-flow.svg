@@ -1,0 +1,74 @@
+<svg width="1300" height="620" viewBox="0 0 1300 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Certificate lifecycle flow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="nodeA" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="nodeB" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#15803D"/>
+    </linearGradient>
+    <linearGradient id="nodeC" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+    <linearGradient id="nodeD" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1E293B"/>
+    </marker>
+  </defs>
+
+  <rect width="1300" height="620" fill="url(#bg)"/>
+  <text x="44" y="56" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Certificate Lifecycle and Incident Pipeline</text>
+
+  <rect x="70" y="116" width="250" height="92" rx="14" fill="url(#nodeA)"/>
+  <text x="96" y="155" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Cert Manager</text>
+  <text x="96" y="178" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">issuance/renewal callbacks</text>
+
+  <rect x="372" y="116" width="250" height="92" rx="14" fill="url(#nodeB)"/>
+  <text x="398" y="155" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Ingest API</text>
+  <text x="398" y="178" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">signature + provenance checks</text>
+
+  <rect x="674" y="116" width="250" height="92" rx="14" fill="url(#nodeC)"/>
+  <text x="700" y="155" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Event Queue</text>
+  <text x="700" y="178" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">certificate_lifecycle_events</text>
+
+  <rect x="976" y="116" width="250" height="92" rx="14" fill="url(#nodeD)"/>
+  <text x="1002" y="155" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Worker</text>
+  <text x="1002" y="178" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">apply/retry lifecycle events</text>
+
+  <line x1="320" y1="162" x2="362" y2="162" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="622" y1="162" x2="664" y2="162" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="924" y1="162" x2="966" y2="162" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="146" y="296" width="306" height="96" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="172" y="340" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">custom_domains state</text>
+  <text x="172" y="364" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">tls_status, cert refs, expiry fields</text>
+
+  <rect x="496" y="296" width="306" height="96" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="522" y="340" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">certificate_incidents</text>
+  <text x="522" y="364" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">tiered open / acknowledged / resolved</text>
+
+  <rect x="846" y="296" width="306" height="96" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="872" y="340" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">cert_region_replicas</text>
+  <text x="872" y="364" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">source / replicated / stale snapshots</text>
+
+  <line x1="1080" y1="208" x2="1080" y2="286" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1080" y1="250" x2="299" y2="286" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1080" y1="250" x2="649" y2="286" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="272" y="456" width="756" height="112" rx="16" fill="#ECFEFF" stroke="#67E8F9" stroke-width="2"/>
+  <text x="304" y="500" fill="#0F766E" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Admin / Ops Control Plane</text>
+  <text x="304" y="526" fill="#155E75" font-family="Segoe UI, Arial, sans-serif" font-size="15">cert event replay, incident ack/resolve, regional inventory and runbook-driven recovery</text>
+
+  <line x1="299" y1="392" x2="410" y2="446" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="649" y1="392" x2="650" y2="446" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="999" y1="392" x2="890" y2="446" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+</svg>

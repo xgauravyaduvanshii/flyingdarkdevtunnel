@@ -1,0 +1,80 @@
+<svg width="1400" height="360" viewBox="0 0 1400 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Control plane tunnel lifecycle">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1400" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="step1" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#15803D"/>
+    </linearGradient>
+    <linearGradient id="step2" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="step3" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+    <linearGradient id="step4" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#7E22CE"/>
+    </linearGradient>
+    <linearGradient id="step5" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <linearGradient id="step6" x1="0" y1="0" x2="180" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#334155"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="360" fill="url(#bg)"/>
+
+  <text x="52" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">
+    Control Plane Lifecycle
+  </text>
+  <text x="52" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">
+    How tunnel sessions are created, authorized, connected, and operated.
+  </text>
+
+  <rect x="52" y="130" width="196" height="150" rx="16" fill="url(#step1)"/>
+  <text x="74" y="182" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">1. Login</text>
+  <text x="74" y="210" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">User authenticates</text>
+  <text x="74" y="230" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">and receives credentials</text>
+
+  <rect x="270" y="130" width="196" height="150" rx="16" fill="url(#step2)"/>
+  <text x="292" y="182" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">2. Create</text>
+  <text x="292" y="210" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Tunnel record created</text>
+  <text x="292" y="230" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">with policy config</text>
+
+  <rect x="488" y="130" width="196" height="150" rx="16" fill="url(#step3)"/>
+  <text x="510" y="182" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">3. Start</text>
+  <text x="510" y="210" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">API issues short-lived</text>
+  <text x="510" y="230" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">agent JWT token</text>
+
+  <rect x="706" y="130" width="196" height="150" rx="16" fill="url(#step4)"/>
+  <text x="728" y="182" fill="#FAF5FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">4. Connect</text>
+  <text x="728" y="210" fill="#F3E8FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Agent opens relay</text>
+  <text x="728" y="230" fill="#F3E8FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">control websocket</text>
+
+  <rect x="924" y="130" width="196" height="150" rx="16" fill="url(#step5)"/>
+  <text x="946" y="182" fill="#F0FDFA" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">5. Active</text>
+  <text x="946" y="210" fill="#CCFBF1" font-family="Segoe UI, Arial, sans-serif" font-size="14">Public traffic routed</text>
+  <text x="946" y="230" fill="#CCFBF1" font-family="Segoe UI, Arial, sans-serif" font-size="14">through relay+agent</text>
+
+  <rect x="1142" y="130" width="196" height="150" rx="16" fill="url(#step6)"/>
+  <text x="1164" y="182" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">6. Inspect</text>
+  <text x="1164" y="210" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Requests logged/replayed</text>
+  <text x="1164" y="230" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">until stop/delete</text>
+
+  <line x1="248" y1="206" x2="260" y2="206" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="466" y1="206" x2="478" y2="206" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="684" y1="206" x2="696" y2="206" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="902" y1="206" x2="914" y2="206" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1120" y1="206" x2="1132" y2="206" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+</svg>
