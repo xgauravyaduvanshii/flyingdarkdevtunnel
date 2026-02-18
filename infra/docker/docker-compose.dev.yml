@@ -57,6 +57,7 @@ services:
       PAYPAL_ENVIRONMENT: sandbox
       BILLING_SUCCESS_URL: http://localhost:3000/billing
       BILLING_CANCEL_URL: http://localhost:3000/billing
+      BILLING_WEBHOOK_MAX_AGE_SECONDS: 86400
     ports:
       - "4000:4000"
     depends_on:

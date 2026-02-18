@@ -55,6 +55,7 @@ declare module "fastify" {
   }
 
   interface FastifyRequest {
+    rawBody?: string | Buffer;
     authUser?: {
       userId: string;
       orgId: string;

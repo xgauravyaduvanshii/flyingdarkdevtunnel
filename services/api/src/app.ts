@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
+import fastifyRawBody from "fastify-raw-body";
 import { envPlugin } from "./plugins/env.js";
 import { dbPlugin } from "./plugins/db.js";
 import { authPlugin } from "./plugins/auth.js";
@@ -18,6 +19,12 @@ export async function buildApp() {
   await app.register(rateLimit, {
     max: 120,
     timeWindow: "1 minute"
+  });
+  await app.register(fastifyRawBody, {
+    field: "rawBody",
+    global: false,
+    encoding: "utf8",
+    runFirst: true,
   });
 
   await app.register(dbPlugin);

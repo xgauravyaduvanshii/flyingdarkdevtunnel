@@ -40,6 +40,7 @@ export const apiEnvSchema = z.object({
   PAYPAL_ENVIRONMENT: z.enum(["sandbox", "live"]).optional().default("sandbox"),
   BILLING_SUCCESS_URL: z.string().url().optional().default("https://console.yourdomain.com/billing/success"),
   BILLING_CANCEL_URL: z.string().url().optional().default("https://console.yourdomain.com/billing/cancel"),
+  BILLING_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(86400),
   BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
   AGENT_JWT_SECRET: z.string().min(32),
   DOMAIN_VERIFY_STRICT: z

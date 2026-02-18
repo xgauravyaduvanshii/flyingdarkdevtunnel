@@ -20,12 +20,12 @@
   - edge auth/IP policy enforcement.
 
 ## Async Workers
-- `services/worker-billing`: Stripe subscription sync to entitlements.
+- `services/worker-billing`: Stripe/Razorpay/PayPal subscription sync to entitlements.
 - `services/worker-inspector`: replay queue processing and retention cleanup.
 - `services/worker-certificates`: custom-domain TLS probe loop and certificate lifecycle status sync.
 
 ## Storage
-- PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements.
+- PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements, billing webhook idempotency event store (`billing_webhook_events`).
 - Redis: ephemeral coordination and rate-limit support (reserved for current + future flows).
 - S3-compatible object storage: payload references for inspection/replay bodies.
 

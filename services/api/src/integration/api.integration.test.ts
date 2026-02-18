@@ -190,4 +190,85 @@ describe("api integration", () => {
       expect(checkoutBody.checkoutUrl).toContain(`provider=${provider}`);
     }
   }, 30_000);
+
+  it("deduplicates Razorpay webhook events with idempotent processing", async () => {
+    const email = `integration-rzp-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Razorpay Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const registerBody = registerRes.json() as { accessToken: string };
+    const accessClaims = jwt.verify(registerBody.accessToken, process.env.JWT_SECRET!) as { orgId: string };
+    const orgId = accessClaims.orgId;
+
+    const razorpayPlanId = `plan_${randomUUID().slice(0, 8)}`;
+    await app.db.query(`UPDATE plans SET razorpay_plan_id = $1 WHERE code = 'pro'`, [razorpayPlanId]);
+
+    const eventId = `evt_${randomUUID().replace(/-/g, "")}`;
+    const subId = `sub_${randomUUID().replace(/-/g, "")}`;
+    const webhookPayload = {
+      event: "subscription.activated",
+      payload: {
+        subscription: {
+          entity: {
+            id: subId,
+            plan_id: razorpayPlanId,
+            status: "active",
+            customer_id: "cust_demo",
+            notes: { orgId },
+          },
+        },
+      },
+    };
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/billing/webhook/razorpay",
+      headers: { "x-razorpay-event-id": eventId },
+      payload: webhookPayload,
+    });
+    expect(first.statusCode).toBe(200);
+    expect((first.json() as { ok?: boolean }).ok).toBe(true);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/billing/webhook/razorpay",
+      headers: { "x-razorpay-event-id": eventId },
+      payload: webhookPayload,
+    });
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json() as { ok?: boolean; duplicate?: boolean };
+    expect(secondBody.ok).toBe(true);
+    expect(secondBody.duplicate).toBe(true);
+
+    const eventRow = await app.db.query<{ attempts: number; status: string }>(
+      `
+        SELECT attempts, status
+        FROM billing_webhook_events
+        WHERE provider = 'razorpay' AND event_id = $1
+        LIMIT 1
+      `,
+      [eventId],
+    );
+    expect(eventRow.rowCount).toBe(1);
+    expect(eventRow.rows[0].status).toBe("processed");
+    expect(eventRow.rows[0].attempts).toBe(2);
+
+    const entitlement = await app.db.query<{ plan_code: string }>(
+      `
+        SELECT p.code AS plan_code
+        FROM entitlements e
+        JOIN plans p ON p.id = e.plan_id
+        WHERE e.org_id = $1
+        LIMIT 1
+      `,
+      [orgId],
+    );
+    expect(entitlement.rowCount).toBe(1);
+    expect(entitlement.rows[0].plan_code).toBe("pro");
+  }, 30_000);
 });
