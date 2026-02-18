@@ -11,7 +11,7 @@
   <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Core commands grouped by operator intent: access, tunneling, observability, and automation.</text>
 
   <rect x="70" y="130" width="1160" height="120" rx="18" fill="#111827"/>
-  <text x="104" y="174" fill="#F9FAFB" font-family="Consolas, Menlo, monospace" font-size="26" font-weight="700">fdt login --api http://localhost:4000 --email you@example.com --password ******</text>
+  <text x="104" y="174" fill="#F9FAFB" font-family="Consolas, Menlo, monospace" font-size="26" font-weight="700">fdt login --api http://localhost:4000 --email xgauravyaduvanshii@gmail.com --password ******</text>
   <text x="104" y="206" fill="#9CA3AF" font-family="Consolas, Menlo, monospace" font-size="16">Authenticate once, store local secure session configuration</text>
 
   <rect x="70" y="280" width="360" height="198" rx="16" fill="#0EA5E9"/>

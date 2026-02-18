@@ -20,7 +20,7 @@ Security fixes are applied to the active development branch:
 Please **do not** disclose security issues in public GitHub issues.
 
 Send a private report to:
-- `security@flyingdarkdevtunnel.dev`
+- `xgauravyaduvanshii@gmail.com`
 
 Please include:
 - affected component(s),

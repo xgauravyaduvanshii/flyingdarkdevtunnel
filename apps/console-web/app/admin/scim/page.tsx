@@ -75,7 +75,7 @@ export default function AdminScimPage() {
         <form className="grid" onSubmit={submitProvision}>
           <div>
             <label>Email</label>
-            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="user@example.com" required />
+            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="xgauravyaduvanshii@gmail.com" required />
           </div>
           <div>
             <label>Template key</label>

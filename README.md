@@ -113,7 +113,7 @@ cd go
 # login
 go run ./agent login \
   --api http://localhost:4000 \
-  --email you@example.com \
+  --email xgauravyaduvanshii@gmail.com \
   --password yourpassword
 
 # http tunnel

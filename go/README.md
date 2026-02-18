@@ -107,7 +107,7 @@ go build -o bin/fdt ./agent
 # 1) login and save local auth context
 go run ./agent login \
   --api http://localhost:4000 \
-  --email dev@example.com \
+  --email xgauravyaduvanshii@gmail.com \
   --password yourpassword
 
 # 2) run HTTP tunnel session

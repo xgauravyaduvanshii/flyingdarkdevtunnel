@@ -133,7 +133,7 @@ export default function AdminMembersPage() {
         <form className="grid" onSubmit={addMember}>
           <div>
             <label>Email</label>
-            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="member@example.com" />
+            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="xgauravyaduvanshii@gmail.com" />
           </div>
           <div>
             <label>Role</label>
