@@ -1,0 +1,50 @@
+<svg width="1300" height="700" viewBox="0 0 1300 700" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Inspection and replay cycle">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="700" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Inspection and Replay Cycle</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Debug production-like flows without losing security controls or data retention boundaries.</text>
+
+  <circle cx="220" cy="340" r="120" fill="#0EA5E9"/>
+  <text x="160" y="332" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Capture</text>
+  <text x="148" y="364" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">Metadata and payload refs</text>
+
+  <circle cx="500" cy="180" r="120" fill="#22C55E"/>
+  <text x="454" y="172" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Index</text>
+  <text x="430" y="204" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">Searchable request timeline</text>
+
+  <circle cx="820" cy="180" r="120" fill="#F97316"/>
+  <text x="762" y="172" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Inspect</text>
+  <text x="748" y="204" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">Headers/body + policy status</text>
+
+  <circle cx="1080" cy="340" r="120" fill="#6366F1"/>
+  <text x="1028" y="332" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Replay</text>
+  <text x="1000" y="364" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Re-run against active tunnel</text>
+
+  <circle cx="820" cy="520" r="120" fill="#A855F7"/>
+  <text x="768" y="512" fill="#FAF5FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Diff</text>
+  <text x="748" y="544" fill="#F3E8FF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Compare response deltas</text>
+
+  <circle cx="500" cy="520" r="120" fill="#0F172A"/>
+  <text x="444" y="512" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Learn</text>
+  <text x="428" y="544" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">Fix code and policy gaps</text>
+
+  <line x1="320" y1="290" x2="390" y2="248" stroke="#334155" stroke-width="4"/>
+  <line x1="620" y1="180" x2="700" y2="180" stroke="#334155" stroke-width="4"/>
+  <line x1="920" y1="230" x2="998" y2="290" stroke="#334155" stroke-width="4"/>
+  <line x1="1030" y1="430" x2="918" y2="472" stroke="#334155" stroke-width="4"/>
+  <line x1="700" y1="520" x2="620" y2="520" stroke="#334155" stroke-width="4"/>
+  <line x1="390" y1="472" x2="312" y2="412" stroke="#334155" stroke-width="4"/>
+
+  <polygon points="390,248 376,250 384,262" fill="#334155"/>
+  <polygon points="700,180 688,172 688,188" fill="#334155"/>
+  <polygon points="998,290 984,286 990,300" fill="#334155"/>
+  <polygon points="918,472 906,462 902,478" fill="#334155"/>
+  <polygon points="620,520 632,512 632,528" fill="#334155"/>
+  <polygon points="312,412 320,398 304,400" fill="#334155"/>
+</svg>

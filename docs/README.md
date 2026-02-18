@@ -90,6 +90,10 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - `docs/assets/platform-pillars.svg`
 - `docs/assets/local-to-public-journey.svg`
 - `docs/assets/cli-command-landscape.svg`
+- `docs/assets/feature-plan-comparison.svg`
+- `docs/assets/deployment-blueprint.svg`
+- `docs/assets/inspection-replay-cycle.svg`
+- `docs/assets/roadmap-flightpath.svg`
 
 ---
 
