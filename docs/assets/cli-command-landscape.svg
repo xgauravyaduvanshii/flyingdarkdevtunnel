@@ -1,0 +1,39 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CLI command landscape">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">CLI Command Landscape</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Core commands grouped by operator intent: access, tunneling, observability, and automation.</text>
+
+  <rect x="70" y="130" width="1160" height="120" rx="18" fill="#111827"/>
+  <text x="104" y="174" fill="#F9FAFB" font-family="Consolas, Menlo, monospace" font-size="26" font-weight="700">fdt login --api http://localhost:4000 --email you@example.com --password ******</text>
+  <text x="104" y="206" fill="#9CA3AF" font-family="Consolas, Menlo, monospace" font-size="16">Authenticate once, store local secure session configuration</text>
+
+  <rect x="70" y="280" width="360" height="198" rx="16" fill="#0EA5E9"/>
+  <text x="98" y="324" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">HTTP/HTTPS</text>
+  <text x="98" y="354" fill="#E0F2FE" font-family="Consolas, Menlo, monospace" font-size="14">fdt http --tunnel-id ...</text>
+  <text x="98" y="378" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Expose local web servers</text>
+  <text x="98" y="402" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Supports subdomain and region hints</text>
+
+  <rect x="470" y="280" width="360" height="198" rx="16" fill="#22C55E"/>
+  <text x="498" y="324" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">TCP</text>
+  <text x="498" y="354" fill="#DCFCE7" font-family="Consolas, Menlo, monospace" font-size="14">fdt tcp --tunnel-id ...</text>
+  <text x="498" y="378" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Forward SSH, DB, IoT protocols</text>
+  <text x="498" y="402" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Raw stream mode with policy checks</text>
+
+  <rect x="870" y="280" width="360" height="198" rx="16" fill="#F97316"/>
+  <text x="898" y="324" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Automation</text>
+  <text x="898" y="354" fill="#FFEDD5" font-family="Consolas, Menlo, monospace" font-size="14">fdt start -config ourdomain.yml</text>
+  <text x="898" y="378" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Start named multi-tunnel config</text>
+  <text x="898" y="402" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Useful for CI and demo setup</text>
+
+  <rect x="70" y="520" width="1160" height="170" rx="18" fill="#1E293B"/>
+  <text x="104" y="566" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Inspection and Discovery</text>
+  <text x="104" y="598" fill="#CBD5E1" font-family="Consolas, Menlo, monospace" font-size="16">fdt tunnels ls      fdt inspect --tunnel-id ...      fdt start -config ...</text>
+  <text x="104" y="628" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="15">CLI output is scriptable with stable JSON responses for operational tooling.</text>
+</svg>

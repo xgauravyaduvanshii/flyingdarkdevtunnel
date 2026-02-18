@@ -87,6 +87,9 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - `docs/assets/release-ops-loop.svg`
 - `docs/assets/payment-orchestration-layers.svg`
 - `docs/assets/cert-incident-timeline.svg`
+- `docs/assets/platform-pillars.svg`
+- `docs/assets/local-to-public-journey.svg`
+- `docs/assets/cli-command-landscape.svg`
 
 ---
 
