@@ -1,0 +1,69 @@
+# Project Plan and Live Status
+
+## Mission
+Build a production-ready, full-stack ngrok-like tunneling platform with secure HTTP/HTTPS/TCP tunnels, custom domain support, robust auth/policy controls, and CI-verified integration coverage.
+
+## Current Phase
+Phase 1 (MVP hardening + production readiness improvements)
+
+## Completed
+- Monorepo foundation with `pnpm` + Turbo workspaces.
+- Fastify control-plane API with auth, tunnels, requests/replay, domains, billing, admin.
+- Go relay + Go CLI agent with working end-to-end HTTP tunneling and TCP stream forwarding.
+- Next.js console + admin UI with tunnel/domain/billing/inspection views.
+- Billing worker + inspector worker.
+- Docker Compose local stack + Cloudflare helper + monitoring basics.
+- Lint/typecheck/build/test pipelines.
+- Initial CI workflow.
+
+## Completed in this update
+- Custom-domain routing hardening APIs:
+  - DNS verification flow (strict mode optional).
+  - Domain-to-tunnel routing API.
+  - TLS mode per domain (`termination` or `passthrough`).
+- Agent token hardening:
+  - Host list and TLS mode mapping claims.
+  - Tunnel auth and IP policy claims for relay enforcement.
+- Relay hardening:
+  - TLS termination server (HTTPS).
+  - Static cert support, autocert support, self-signed fallback.
+  - TLS passthrough listener with SNI host extraction.
+  - Host-mode enforcement (passthrough hosts blocked on HTTP termination path).
+  - Basic auth and IP allowlist enforcement at relay edge.
+- CI/integration upgrades:
+  - API integration test coverage for paid-domain routing and enriched token claims.
+  - End-to-end smoke script (API + relay + agent + workers + postgres + redis).
+  - GitHub Actions integration job with ephemeral Postgres/Redis service containers.
+
+## In Progress
+- Certificate lifecycle automation depth:
+  - Relay autocert path implemented.
+  - Need certificate status sync back to control-plane (`pending_issue` -> `issued` / renew failure handling).
+
+## Next (Implementation Queue)
+1. Certificate lifecycle sync worker:
+   - Track issuance/renewal status in `custom_domains`.
+   - Surface TLS health/errors in API + console.
+2. Multi-region edge foundations:
+   - Region-aware relay registration and host assignment.
+3. Enterprise controls:
+   - Team/org RBAC expansion.
+   - SSO and immutable audit controls.
+4. Performance and resilience:
+   - Load tests for relay concurrency and reconnect storms.
+   - Backpressure and connection limit policy stress tests.
+5. Security hardening:
+   - Secret rotation workflows and token revoke list.
+   - Enhanced abuse/rate limiting and anomaly detection.
+
+## Definition of Done (for current hardening track)
+- Domain verification + routing + TLS mode APIs are stable.
+- Relay enforces auth/IP/host-mode policy correctly.
+- CI runs integration tests against ephemeral Postgres/Redis containers.
+- End-to-end smoke test passes in automation.
+
+## Update Cadence
+This file should be updated on every major implementation commit with:
+- what shipped,
+- what changed in scope,
+- what remains.

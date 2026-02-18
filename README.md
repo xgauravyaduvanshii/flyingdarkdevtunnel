@@ -89,6 +89,20 @@ pnpm test
 cd go && go test ./... && go build -o bin/relay ./relay && go build -o bin/fdt ./agent
 ```
 
+## Integration validation
+
+```bash
+# requires postgres + redis
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/fdt \
+REDIS_URL=redis://127.0.0.1:6379 \
+bash scripts/integration-smoke.sh
+```
+
 ## Example multi-tunnel config
 
 See `ourdomain.yml.example` or `go/ourdomain.example.yml`.
+
+## Planning and technical docs
+
+- Live implementation plan: `plan.md`
+- Engineering docs: `docs/`

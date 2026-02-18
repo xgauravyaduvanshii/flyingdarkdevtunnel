@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,9 +17,81 @@ jobs:
         with:
           node-version: 20
           cache: "pnpm"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
       - name: Install
         run: pnpm install --frozen-lockfile=false
+      - name: Lint
+        run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
       - name: Build
         run: pnpm build
+      - name: Go build and tests
+        run: |
+          cd go
+          go test ./...
+          go build -o bin/relay ./relay
+          go build -o bin/fdt ./agent
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fdt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fdt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Install
+        run: pnpm install --frozen-lockfile=false
+      - name: API integration tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fdt
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_SECRET: 12345678901234567890123456789012
+          JWT_REFRESH_SECRET: 12345678901234567890123456789012
+          AGENT_JWT_SECRET: 12345678901234567890123456789012
+          BASE_DOMAIN: tunnel.yourdomain.com
+          DOMAIN_VERIFY_STRICT: false
+        run: pnpm --filter @fdt/api test:integration
+      - name: End-to-end smoke (api + relay + agent + workers)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fdt
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_SECRET: 12345678901234567890123456789012
+          JWT_REFRESH_SECRET: 12345678901234567890123456789012
+          AGENT_JWT_SECRET: 12345678901234567890123456789012
+          BASE_DOMAIN: tunnel.yourdomain.com
+        run: bash scripts/integration-smoke.sh

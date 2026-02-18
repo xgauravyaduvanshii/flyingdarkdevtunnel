@@ -62,14 +62,20 @@ services:
     command: sh -lc "go mod tidy && go run ./relay"
     environment:
       RELAY_HTTP_PORT: 8080
+      RELAY_HTTPS_PORT: 8443
       RELAY_CONTROL_PORT: 8081
+      RELAY_TLS_PASSTHROUGH_PORT: 9443
       RELAY_BASE_DOMAIN: tunnel.yourdomain.com
       RELAY_AGENT_JWT_SECRET: replace_with_at_least_32_characters_here
+      RELAY_TLS_ENABLE: "true"
+      RELAY_AUTOCERT_ENABLE: "false"
       RELAY_TCP_START_PORT: 7000
       RELAY_TCP_END_PORT: 7099
     ports:
       - "8080:8080"
+      - "8443:8443"
       - "8081:8081"
+      - "9443:9443"
       - "7000-7099:7000-7099"
     depends_on:
       - api

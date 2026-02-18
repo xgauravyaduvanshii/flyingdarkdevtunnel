@@ -163,7 +163,17 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       protocol: "http" | "https" | "tcp";
       subdomain: string | null;
       org_id: string;
-    }>(`SELECT id, protocol, subdomain, org_id FROM tunnels WHERE id = $1 AND org_id = $2`, [params.id, request.authUser!.orgId]);
+      basic_auth_user: string | null;
+      basic_auth_password: string | null;
+      ip_allowlist: string[] | null;
+    }>(
+      `
+      SELECT id, protocol, subdomain, org_id, basic_auth_user, basic_auth_password, ip_allowlist
+      FROM tunnels
+      WHERE id = $1 AND org_id = $2
+    `,
+      [params.id, request.authUser!.orgId],
+    );
 
     if (!tunnel.rowCount || !tunnel.rows[0]) {
       return reply.code(404).send({ message: "Tunnel not found" });
@@ -174,12 +184,41 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
     await app.db.query(`INSERT INTO tunnel_sessions (id, tunnel_id, active) VALUES ($1, $2, TRUE)`, [sessionId, params.id]);
 
     const row = tunnel.rows[0];
+    const hosts: string[] = [];
+    const tlsModes: Record<string, "termination" | "passthrough"> = {};
+    if (row.subdomain) {
+      const defaultHost = `${row.subdomain}.${app.env.BASE_DOMAIN}`;
+      hosts.push(defaultHost);
+      tlsModes[defaultHost] = "termination";
+    }
+
+    const domainRoutes = await app.db.query<{
+      domain: string;
+      tls_mode: "termination" | "passthrough";
+    }>(
+      `
+      SELECT domain, tls_mode
+      FROM custom_domains
+      WHERE org_id = $1 AND target_tunnel_id = $2 AND verified = TRUE
+    `,
+      [request.authUser!.orgId, row.id],
+    );
+    for (const domainRoute of domainRoutes.rows) {
+      hosts.push(domainRoute.domain);
+      tlsModes[domainRoute.domain] = domainRoute.tls_mode;
+    }
+
     const agentToken = await app.auth.signAgentToken({
       userId: request.authUser!.userId,
       orgId: request.authUser!.orgId,
       tunnelId: row.id,
       protocol: row.protocol,
       subdomain: row.subdomain,
+      hosts,
+      tlsModes,
+      basicAuthUser: row.basic_auth_user ?? null,
+      basicAuthPassword: row.basic_auth_password ?? null,
+      ipAllowlist: row.ip_allowlist ?? [],
     });
 
     await app.audit.log({
@@ -190,7 +229,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       entityId: params.id
     });
 
-    return { ok: true, sessionId, agentToken };
+    return { ok: true, sessionId, agentToken, hosts, tlsModes };
   });
 
   app.post("/:id/stop", async (request, reply) => {

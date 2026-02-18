@@ -45,12 +45,41 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ message: "Invalid authtoken" });
     }
 
+    const hosts: string[] = [];
+    const tlsModes: Record<string, "termination" | "passthrough"> = {};
+    if (tunnel.subdomain) {
+      const defaultHost = `${tunnel.subdomain}.${app.env.BASE_DOMAIN}`;
+      hosts.push(defaultHost);
+      tlsModes[defaultHost] = "termination";
+    }
+
+    const domainRoutes = await app.db.query<{
+      domain: string;
+      tls_mode: "termination" | "passthrough";
+    }>(
+      `
+      SELECT domain, tls_mode
+      FROM custom_domains
+      WHERE org_id = $1 AND target_tunnel_id = $2 AND verified = TRUE
+    `,
+      [tunnel.org_id, tunnel.id],
+    );
+    for (const route of domainRoutes.rows) {
+      hosts.push(route.domain);
+      tlsModes[route.domain] = route.tls_mode;
+    }
+
     const token = await app.auth.signAgentToken({
       userId: tunnel.user_id,
       orgId: tunnel.org_id,
       tunnelId: tunnel.id,
       protocol: tunnel.protocol,
       subdomain: tunnel.subdomain,
+      hosts,
+      tlsModes,
+      basicAuthUser: tunnel.basic_auth_user,
+      basicAuthPassword: tunnel.basic_auth_password,
+      ipAllowlist: tunnel.ip_allowlist ?? [],
     });
 
     await app.audit.log({
@@ -70,6 +99,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         localAddr: tunnel.local_addr,
         publicUrl: tunnel.public_url,
         inspect: tunnel.inspect,
+        hosts,
+        tlsModes,
         authPolicy: {
           basicAuthUser: tunnel.basic_auth_user,
           basicAuthPassword: tunnel.basic_auth_password,
