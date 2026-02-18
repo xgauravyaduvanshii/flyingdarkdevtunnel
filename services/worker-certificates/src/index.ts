@@ -9,10 +9,14 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   CERT_WORKER_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   TLS_PROBE_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(8),
+  CERT_EXPIRY_WARN_DAYS: z.coerce.number().int().positive().default(30),
+  CERT_ALERT_WEBHOOK_URL: z.string().url().optional(),
+  CERT_ALERT_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(1800),
 });
 
 const env = envSchema.parse(process.env);
 const db = new Pool({ connectionString: env.DATABASE_URL });
+const lastAlertAtByKey = new Map<string, number>();
 
 type CustomDomain = {
   id: string;
@@ -76,7 +80,7 @@ async function probeTlsCertificate(domain: string, timeoutSeconds: number): Prom
       }
 
       const msRemaining = notAfter.getTime() - Date.now();
-      const status = msRemaining <= 1000 * 60 * 60 * 24 * 30 ? "expiring" : "issued";
+      const status = msRemaining <= 1000 * 60 * 60 * 24 * env.CERT_EXPIRY_WARN_DAYS ? "expiring" : "issued";
       finish({
         status,
         certificateRef: cert.fingerprint256 ? `sha256:${String(cert.fingerprint256).replace(/:/g, "")}` : null,
@@ -103,6 +107,72 @@ async function probeTlsCertificate(domain: string, timeoutSeconds: number): Prom
       });
     });
   });
+}
+
+type AlertState = {
+  domainId: string;
+  domain: string;
+  tlsMode: "termination" | "passthrough";
+  status: DomainTlsStatus;
+  notAfter: Date | null;
+  error: string | null;
+};
+
+function alertKeyFor(state: AlertState): string {
+  return `${state.domainId}:${state.status}`;
+}
+
+function shouldAlert(state: AlertState): boolean {
+  return state.status === "tls_error" || state.status === "expiring";
+}
+
+function formatAlertMessage(state: AlertState): string {
+  if (state.status === "expiring" && state.notAfter) {
+    const daysLeft = Math.max(0, Math.ceil((state.notAfter.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+    return `[worker-certificates] tls certificate expiring domain=${state.domain} tls_mode=${state.tlsMode} not_after=${state.notAfter.toISOString()} days_left=${daysLeft}`;
+  }
+  return `[worker-certificates] tls probe error domain=${state.domain} tls_mode=${state.tlsMode} error=${state.error ?? "unknown"}`;
+}
+
+async function maybeEmitAlert(state: AlertState): Promise<void> {
+  if (!shouldAlert(state)) {
+    return;
+  }
+
+  const key = alertKeyFor(state);
+  const now = Date.now();
+  const last = lastAlertAtByKey.get(key) ?? 0;
+  if (now - last < env.CERT_ALERT_COOLDOWN_SECONDS * 1000) {
+    return;
+  }
+
+  const message = formatAlertMessage(state);
+  console.warn(message);
+
+  if (env.CERT_ALERT_WEBHOOK_URL) {
+    try {
+      await fetch(env.CERT_ALERT_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: "worker-certificates",
+          severity: "warning",
+          domainId: state.domainId,
+          domain: state.domain,
+          tlsMode: state.tlsMode,
+          status: state.status,
+          notAfter: state.notAfter ? state.notAfter.toISOString() : null,
+          error: state.error,
+          expiryWarnDays: env.CERT_EXPIRY_WARN_DAYS,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+    } catch (error) {
+      console.error("[worker-certificates] alert webhook delivery failed", error);
+    }
+  }
+
+  lastAlertAtByKey.set(key, now);
 }
 
 async function syncCertificateState(): Promise<void> {
@@ -162,6 +232,15 @@ async function syncCertificateState(): Promise<void> {
       `,
       [domain.id, status, certificateRef, notAfter, error],
     );
+
+    await maybeEmitAlert({
+      domainId: domain.id,
+      domain: domain.domain,
+      tlsMode: domain.tls_mode,
+      status,
+      notAfter,
+      error,
+    });
   }
 }
 

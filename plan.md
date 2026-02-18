@@ -17,6 +17,10 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Certificate alerting hardening:
+  - Added certificate expiry threshold controls to `worker-certificates`.
+  - Added TLS error/expiry warning emission with per-domain cooldown logic.
+  - Added optional certificate alert webhook routing for ops integrations.
 - Billing replay automation + alert routing:
   - Added admin replay endpoint for individual failed webhook events.
   - Added admin reconcile endpoint for batch replay by provider.
@@ -70,7 +74,7 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
-  - Add cert-expiry alerting and on-call runbooks.
+  - Add on-call runbooks tied to cert alert signals.
 - Payment production hardening:
   - Add signed runbook triggers to replay by provider/event class automatically.
   - Add dashboard SLOs and paging policies for webhook processing latency.
