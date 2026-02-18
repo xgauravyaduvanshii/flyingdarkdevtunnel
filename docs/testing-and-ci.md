@@ -25,6 +25,8 @@
   - billing report export queue with reconcile/reset-attempt operations.
   - export sink ACK endpoint and admin ACK-reconcile requeue path.
   - certificate event DLQ/admin replay controls and cert region summary.
+  - cert callback-only ingest mapping plus cert incident ack/resolve admin flow.
+  - signed settlement receipt ingest and admin reconciliation (`matched` and `delta`) controls.
   - relay certificate replication snapshot endpoint (`/v1/relay/cert-replication`).
   - weighted relay edge selection with regional failover.
   - adaptive abuse login blocking after high-severity anomaly signals.

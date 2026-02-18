@@ -1101,6 +1101,43 @@ function verifyRunbookSignature(
   return { ok: true };
 }
 
+function verifySettlementSignature(
+  app: FastifyInstance,
+  request: FastifyRequest,
+): { ok: boolean; message?: string } {
+  if (!app.env.BILLING_SETTLEMENT_SIGNING_SECRET) {
+    return { ok: false, message: "Settlement signing secret is not configured" };
+  }
+
+  const signature = headerValue(request.headers["x-fdt-settlement-signature"]);
+  const timestampRaw = headerValue(request.headers["x-fdt-settlement-timestamp"]);
+  if (!signature || !timestampRaw) {
+    return { ok: false, message: "Missing settlement signature headers" };
+  }
+
+  const timestamp = Number.parseInt(timestampRaw, 10);
+  if (!Number.isFinite(timestamp)) {
+    return { ok: false, message: "Invalid settlement timestamp" };
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSeconds - timestamp) > app.env.BILLING_SETTLEMENT_MAX_AGE_SECONDS) {
+    return { ok: false, message: "Settlement signature expired" };
+  }
+
+  const rawBody = getRawBody(request);
+  const expected = crypto
+    .createHmac("sha256", app.env.BILLING_SETTLEMENT_SIGNING_SECRET)
+    .update(`${timestampRaw}.${rawBody}`)
+    .digest("hex");
+
+  if (!safeHexCompare(expected, signature)) {
+    return { ok: false, message: "Invalid settlement signature" };
+  }
+
+  return { ok: true };
+}
+
 async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Promise<void> {
   if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") {
     const sub = event.data.object as Stripe.Subscription;
@@ -1572,6 +1609,113 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
 
     return { ok: true, id: params.id };
   });
+
+  app.post(
+    "/settlement-receipts",
+    { config: { rawBody: true } },
+    async (request, reply) => {
+      const signatureCheck = verifySettlementSignature(app, request);
+      if (!signatureCheck.ok) {
+        const code = signatureCheck.message?.includes("configured") ? 503 : 401;
+        return reply.code(code).send({ message: signatureCheck.message ?? "Invalid settlement signature" });
+      }
+
+      const body = z
+        .object({
+          provider: checkoutProviderSchema,
+          batchId: z.string().min(2).max(255),
+          periodStart: z.coerce.date().optional(),
+          periodEnd: z.coerce.date().optional(),
+          totalEvents: z.coerce.number().int().min(0).optional().default(0),
+          totalAmountCents: z.coerce.number().int().optional(),
+          currency: z.string().length(3).optional(),
+          eventDigest: z.string().max(255).optional(),
+          payload: z.record(z.unknown()).optional(),
+        })
+        .parse(request.body ?? {});
+
+      if (body.periodStart && body.periodEnd && body.periodEnd <= body.periodStart) {
+        return reply.code(400).send({ message: "periodEnd must be greater than periodStart" });
+      }
+
+      const payloadDigest = body.eventDigest ?? sha256Hex(getRawBody(request));
+      const upsert = await app.db.query<{
+        id: string;
+        reconciliation_status: "pending" | "matched" | "delta" | "failed";
+      }>(
+        `
+        INSERT INTO billing_settlement_receipts (
+          id,
+          provider,
+          batch_id,
+          period_start,
+          period_end,
+          total_events,
+          total_amount_cents,
+          currency,
+          event_digest,
+          payload_json,
+          signature_valid,
+          reconciliation_status,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, UPPER($8), $9, $10, TRUE, 'pending', NOW())
+        ON CONFLICT (provider, batch_id) DO UPDATE
+        SET
+          period_start = COALESCE(EXCLUDED.period_start, billing_settlement_receipts.period_start),
+          period_end = COALESCE(EXCLUDED.period_end, billing_settlement_receipts.period_end),
+          total_events = EXCLUDED.total_events,
+          total_amount_cents = COALESCE(EXCLUDED.total_amount_cents, billing_settlement_receipts.total_amount_cents),
+          currency = COALESCE(EXCLUDED.currency, billing_settlement_receipts.currency),
+          event_digest = COALESCE(EXCLUDED.event_digest, billing_settlement_receipts.event_digest),
+          payload_json = COALESCE(EXCLUDED.payload_json, billing_settlement_receipts.payload_json),
+          signature_valid = TRUE,
+          reconciliation_status = CASE
+            WHEN billing_settlement_receipts.reconciliation_status = 'failed' THEN 'pending'
+            ELSE billing_settlement_receipts.reconciliation_status
+          END,
+          updated_at = NOW()
+        RETURNING id, reconciliation_status
+      `,
+        [
+          uuidv4(),
+          body.provider,
+          body.batchId,
+          body.periodStart ?? null,
+          body.periodEnd ?? null,
+          body.totalEvents,
+          body.totalAmountCents ?? null,
+          body.currency ?? null,
+          payloadDigest,
+          body.payload ?? null,
+        ],
+      );
+
+      const receipt = upsert.rows[0];
+      await app.audit.log({
+        actorUserId: null,
+        orgId: null,
+        action: "billing.settlement.receipt.ingest",
+        entityType: "billing_settlement_receipt",
+        entityId: receipt.id,
+        metadata: {
+          provider: body.provider,
+          batchId: body.batchId,
+          totalEvents: body.totalEvents,
+          totalAmountCents: body.totalAmountCents ?? null,
+          reconciliationStatus: receipt.reconciliation_status,
+        },
+      });
+
+      return reply.code(202).send({
+        ok: true,
+        id: receipt.id,
+        provider: body.provider,
+        batchId: body.batchId,
+        reconciliationStatus: receipt.reconciliation_status,
+      });
+    },
+  );
 
   app.get(
     "/subscription",

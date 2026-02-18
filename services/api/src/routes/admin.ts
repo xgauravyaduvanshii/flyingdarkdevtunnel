@@ -9,6 +9,9 @@ import { reconcileFailedWebhookEvents, replayWebhookEventById } from "./billing.
 
 const invoiceStatusSchema = z.enum(["draft", "open", "paid", "past_due", "void", "uncollectible", "failed", "refunded"]);
 const orgRoleSchema = z.enum(["owner", "admin", "member", "billing", "viewer"]);
+const certIncidentStatusSchema = z.enum(["open", "acknowledged", "resolved"]);
+const certIncidentTypeSchema = z.enum(["issuance_failed", "renewal_failed", "certificate_expiring", "tls_error"]);
+const settlementStatusSchema = z.enum(["pending", "matched", "delta", "failed"]);
 
 function csvEscape(value: unknown): string {
   const text = value == null ? "" : String(value);
@@ -37,6 +40,110 @@ function normalizeTemplateKey(input: string): string {
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.auth.requireAdmin);
+
+  async function reconcileSettlementReceiptById(input: {
+    id: string;
+    toleranceEvents: number;
+    toleranceAmountCents: number;
+    forceSignature: boolean;
+  }): Promise<{
+    id: string;
+    provider: "stripe" | "razorpay" | "paypal";
+    batchId: string;
+    reconciliationStatus: "pending" | "matched" | "delta" | "failed";
+    deltaEvents: number;
+    deltaAmountCents: number;
+    signatureValid: boolean;
+  } | null> {
+    const receiptRes = await app.db.query<{
+      id: string;
+      provider: "stripe" | "razorpay" | "paypal";
+      batch_id: string;
+      period_start: Date | null;
+      period_end: Date | null;
+      total_events: number;
+      total_amount_cents: string | null;
+      signature_valid: boolean;
+    }>(
+      `
+      SELECT
+        id,
+        provider,
+        batch_id,
+        period_start,
+        period_end,
+        total_events,
+        total_amount_cents,
+        signature_valid
+      FROM billing_settlement_receipts
+      WHERE id = $1
+      LIMIT 1
+    `,
+      [input.id],
+    );
+
+    if (!receiptRes.rowCount || !receiptRes.rows[0]) {
+      return null;
+    }
+    const receipt = receiptRes.rows[0];
+
+    let deltaEvents = 0;
+    let deltaAmountCents = 0;
+    let reconciliationStatus: "pending" | "matched" | "delta" | "failed" = "pending";
+
+    if (!receipt.signature_valid && !input.forceSignature) {
+      reconciliationStatus = "failed";
+    } else {
+      const aggregate = await app.db.query<{ events_total: string; amount_total: string }>(
+        `
+        SELECT
+          COUNT(*)::text AS events_total,
+          COALESCE(SUM(amount_cents), 0)::text AS amount_total
+        FROM billing_finance_events
+        WHERE provider = $1
+          AND status IN ('processed', 'mocked')
+          AND ($2::timestamptz IS NULL OR created_at >= $2)
+          AND ($3::timestamptz IS NULL OR created_at < $3)
+      `,
+        [receipt.provider, receipt.period_start, receipt.period_end],
+      );
+
+      const recordedEvents = Number.parseInt(aggregate.rows[0]?.events_total ?? "0", 10);
+      const recordedAmountCents = Number.parseInt(aggregate.rows[0]?.amount_total ?? "0", 10);
+      const receiptEvents = receipt.total_events ?? 0;
+      const receiptAmountCents = Number.parseInt(receipt.total_amount_cents ?? "0", 10);
+      deltaEvents = recordedEvents - receiptEvents;
+      deltaAmountCents = recordedAmountCents - receiptAmountCents;
+
+      const eventDeltaWithinTolerance = Math.abs(deltaEvents) <= input.toleranceEvents;
+      const amountDeltaWithinTolerance = Math.abs(deltaAmountCents) <= input.toleranceAmountCents;
+      reconciliationStatus = eventDeltaWithinTolerance && amountDeltaWithinTolerance ? "matched" : "delta";
+    }
+
+    await app.db.query(
+      `
+      UPDATE billing_settlement_receipts
+      SET
+        reconciliation_status = $2,
+        reconciliation_delta_events = $3,
+        reconciliation_delta_amount_cents = $4,
+        reconciled_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+      [receipt.id, reconciliationStatus, deltaEvents, deltaAmountCents],
+    );
+
+    return {
+      id: receipt.id,
+      provider: receipt.provider,
+      batchId: receipt.batch_id,
+      reconciliationStatus,
+      deltaEvents,
+      deltaAmountCents,
+      signatureValid: receipt.signature_valid,
+    };
+  }
 
   app.get("/users", async () => {
     const users = await app.db.query(
@@ -166,6 +273,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         e.last_dlq_replayed_at,
         e.next_retry_at,
         e.last_error,
+        e.callback_class,
+        e.callback_action,
+        e.callback_attempt,
+        e.callback_received_at,
         e.provenance_subject,
         e.provenance_verified,
         e.created_at,
@@ -374,6 +485,219 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       replayed: updated.rowCount ?? 0,
       ids: updated.rows.map((row) => row.id),
     };
+  });
+
+  app.get("/cert-incidents", async (request) => {
+    const query = z
+      .object({
+        status: certIncidentStatusSchema.optional(),
+        tier: z.coerce.number().int().min(1).max(3).optional(),
+        type: certIncidentTypeSchema.optional(),
+        orgId: z.string().uuid().optional(),
+        domain: z.string().min(3).optional(),
+        source: z.string().min(2).max(80).optional(),
+        clusterId: z.string().min(2).max(120).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const incidents = await app.db.query(
+      `
+      SELECT
+        i.id,
+        i.domain_id,
+        i.domain,
+        i.org_id,
+        i.source,
+        i.cluster_id,
+        i.event_id,
+        i.incident_type,
+        i.tier,
+        i.status,
+        i.reason,
+        i.context,
+        i.acknowledged_by,
+        ack_user.email AS acknowledged_by_email,
+        i.acknowledged_at,
+        i.resolved_by,
+        resolve_user.email AS resolved_by_email,
+        i.resolved_at,
+        i.created_at,
+        i.updated_at
+      FROM certificate_incidents i
+      LEFT JOIN users ack_user ON ack_user.id = i.acknowledged_by
+      LEFT JOIN users resolve_user ON resolve_user.id = i.resolved_by
+      WHERE ($1::text IS NULL OR i.status = $1)
+        AND ($2::int IS NULL OR i.tier = $2)
+        AND ($3::text IS NULL OR i.incident_type = $3)
+        AND ($4::uuid IS NULL OR i.org_id = $4)
+        AND ($5::text IS NULL OR i.domain = LOWER($5))
+        AND ($6::text IS NULL OR i.source = LOWER($6))
+        AND ($7::text IS NULL OR i.cluster_id = LOWER($7))
+      ORDER BY
+        CASE i.status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
+        i.tier DESC,
+        i.created_at DESC
+      LIMIT $8
+    `,
+      [
+        query.status ?? null,
+        query.tier ?? null,
+        query.type ?? null,
+        query.orgId ?? null,
+        query.domain ?? null,
+        query.source ?? null,
+        query.clusterId ?? null,
+        query.limit,
+      ],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      open: string;
+      acknowledged: string;
+      resolved: string;
+      tier3_open: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE status = 'open')::text AS open,
+        COUNT(*) FILTER (WHERE status = 'acknowledged')::text AS acknowledged,
+        COUNT(*) FILTER (WHERE status = 'resolved')::text AS resolved,
+        COUNT(*) FILTER (WHERE status = 'open' AND tier = 3)::text AS tier3_open
+      FROM certificate_incidents
+      WHERE ($1::text IS NULL OR status = $1)
+        AND ($2::int IS NULL OR tier = $2)
+        AND ($3::text IS NULL OR incident_type = $3)
+        AND ($4::uuid IS NULL OR org_id = $4)
+        AND ($5::text IS NULL OR domain = LOWER($5))
+        AND ($6::text IS NULL OR source = LOWER($6))
+        AND ($7::text IS NULL OR cluster_id = LOWER($7))
+    `,
+      [
+        query.status ?? null,
+        query.tier ?? null,
+        query.type ?? null,
+        query.orgId ?? null,
+        query.domain ?? null,
+        query.source ?? null,
+        query.clusterId ?? null,
+      ],
+    );
+
+    return {
+      incidents: incidents.rows,
+      stats: stats.rows[0] ?? { total: "0", open: "0", acknowledged: "0", resolved: "0", tier3_open: "0" },
+    };
+  });
+
+  app.post("/cert-incidents/:id/ack", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params ?? {});
+    const body = z
+      .object({
+        note: z.string().max(2000).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const current = await app.db.query<{ id: string; status: "open" | "acknowledged" | "resolved" }>(
+      `SELECT id, status FROM certificate_incidents WHERE id = $1 LIMIT 1`,
+      [params.id],
+    );
+
+    if (!current.rowCount || !current.rows[0]) {
+      return reply.code(404).send({ message: "Certificate incident not found" });
+    }
+
+    if (current.rows[0].status === "resolved") {
+      return reply.code(409).send({ message: "Resolved incidents cannot be acknowledged" });
+    }
+
+    if (current.rows[0].status === "acknowledged") {
+      return { ok: true, alreadyAcknowledged: true, incidentId: params.id };
+    }
+
+    const update = await app.db.query<{ id: string; status: string; acknowledged_at: Date | null }>(
+      `
+      UPDATE certificate_incidents
+      SET
+        status = 'acknowledged',
+        acknowledged_by = $2::uuid,
+        acknowledged_at = NOW(),
+        context = COALESCE(context, '{}'::jsonb) || jsonb_build_object(
+          'acknowledgedBy', $2::text,
+          'acknowledgedAt', NOW(),
+          'ackNote', $3::text
+        ),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, status, acknowledged_at
+    `,
+      [params.id, request.authUser!.userId, body.note ?? null],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.cert_incident.ack",
+      entityType: "certificate_incident",
+      entityId: params.id,
+      metadata: { note: body.note ?? null },
+    });
+
+    return { ok: true, incident: update.rows[0] };
+  });
+
+  app.post("/cert-incidents/:id/resolve", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params ?? {});
+    const body = z
+      .object({
+        note: z.string().max(2000).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const current = await app.db.query<{ id: string; status: "open" | "acknowledged" | "resolved" }>(
+      `SELECT id, status FROM certificate_incidents WHERE id = $1 LIMIT 1`,
+      [params.id],
+    );
+
+    if (!current.rowCount || !current.rows[0]) {
+      return reply.code(404).send({ message: "Certificate incident not found" });
+    }
+
+    if (current.rows[0].status === "resolved") {
+      return { ok: true, alreadyResolved: true, incidentId: params.id };
+    }
+
+    const update = await app.db.query<{ id: string; status: string; resolved_at: Date | null }>(
+      `
+      UPDATE certificate_incidents
+      SET
+        status = 'resolved',
+        resolved_by = $2::uuid,
+        resolved_at = NOW(),
+        context = COALESCE(context, '{}'::jsonb) || jsonb_build_object(
+          'resolvedBy', $2::text,
+          'resolvedAt', NOW(),
+          'resolveNote', $3::text
+        ),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, status, resolved_at
+    `,
+      [params.id, request.authUser!.userId, body.note ?? null],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.cert_incident.resolve",
+      entityType: "certificate_incident",
+      entityId: params.id,
+      metadata: { note: body.note ?? null },
+    });
+
+    return { ok: true, incident: update.rows[0] };
   });
 
   app.get("/domains/cert-region-summary", async (request) => {
@@ -1509,6 +1833,183 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           cancellations: "0",
           payment_failed: "0",
         },
+    };
+  });
+
+  app.get("/billing-settlement-receipts", async (request) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: settlementStatusSchema.optional(),
+        batchId: z.string().min(2).max(255).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const receipts = await app.db.query(
+      `
+      SELECT
+        id,
+        provider,
+        batch_id,
+        period_start,
+        period_end,
+        total_events,
+        total_amount_cents,
+        currency,
+        event_digest,
+        signature_valid,
+        reconciliation_status,
+        reconciliation_delta_events,
+        reconciliation_delta_amount_cents,
+        reconciled_at,
+        created_at,
+        updated_at
+      FROM billing_settlement_receipts
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::text IS NULL OR reconciliation_status = $2)
+        AND ($3::text IS NULL OR batch_id = $3)
+      ORDER BY created_at DESC
+      LIMIT $4
+    `,
+      [query.provider ?? null, query.status ?? null, query.batchId ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      pending: string;
+      matched: string;
+      delta: string;
+      failed: string;
+      invalid_signature: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE reconciliation_status = 'pending')::text AS pending,
+        COUNT(*) FILTER (WHERE reconciliation_status = 'matched')::text AS matched,
+        COUNT(*) FILTER (WHERE reconciliation_status = 'delta')::text AS delta,
+        COUNT(*) FILTER (WHERE reconciliation_status = 'failed')::text AS failed,
+        COUNT(*) FILTER (WHERE signature_valid = FALSE)::text AS invalid_signature
+      FROM billing_settlement_receipts
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::text IS NULL OR reconciliation_status = $2)
+        AND ($3::text IS NULL OR batch_id = $3)
+    `,
+      [query.provider ?? null, query.status ?? null, query.batchId ?? null],
+    );
+
+    return {
+      receipts: receipts.rows,
+      stats: stats.rows[0] ?? { total: "0", pending: "0", matched: "0", delta: "0", failed: "0", invalid_signature: "0" },
+    };
+  });
+
+  app.post("/billing-settlement-receipts/:id/reconcile", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params ?? {});
+    const body = z
+      .object({
+        toleranceEvents: z.coerce.number().int().min(0).max(1000).optional().default(0),
+        toleranceAmountCents: z.coerce.number().int().min(0).max(10_000_000_000).optional().default(0),
+        forceSignature: z.coerce.boolean().optional().default(false),
+      })
+      .parse(request.body ?? {});
+
+    const reconciled = await reconcileSettlementReceiptById({
+      id: params.id,
+      toleranceEvents: body.toleranceEvents,
+      toleranceAmountCents: body.toleranceAmountCents,
+      forceSignature: body.forceSignature,
+    });
+    if (!reconciled) {
+      return reply.code(404).send({ message: "Settlement receipt not found" });
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_settlement_receipt.reconcile",
+      entityType: "billing_settlement_receipt",
+      entityId: params.id,
+      metadata: {
+        toleranceEvents: body.toleranceEvents,
+        toleranceAmountCents: body.toleranceAmountCents,
+        forceSignature: body.forceSignature,
+        result: reconciled,
+      },
+    });
+
+    return { ok: true, receipt: reconciled };
+  });
+
+  app.post("/billing-settlement-receipts/reconcile", async (request) => {
+    const body = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: settlementStatusSchema.optional().default("pending"),
+        toleranceEvents: z.coerce.number().int().min(0).max(1000).optional().default(0),
+        toleranceAmountCents: z.coerce.number().int().min(0).max(10_000_000_000).optional().default(0),
+        forceSignature: z.coerce.boolean().optional().default(false),
+        limit: z.coerce.number().int().min(1).max(1000).optional().default(200),
+      })
+      .parse(request.body ?? {});
+
+    const candidates = await app.db.query<{ id: string }>(
+      `
+      SELECT id
+      FROM billing_settlement_receipts
+      WHERE reconciliation_status = $1
+        AND ($2::text IS NULL OR provider = $2)
+      ORDER BY created_at ASC
+      LIMIT $3
+    `,
+      [body.status, body.provider ?? null, body.limit],
+    );
+
+    const results: Array<{
+      id: string;
+      provider: "stripe" | "razorpay" | "paypal";
+      batchId: string;
+      reconciliationStatus: "pending" | "matched" | "delta" | "failed";
+      deltaEvents: number;
+      deltaAmountCents: number;
+      signatureValid: boolean;
+    }> = [];
+
+    for (const row of candidates.rows) {
+      const reconciled = await reconcileSettlementReceiptById({
+        id: row.id,
+        toleranceEvents: body.toleranceEvents,
+        toleranceAmountCents: body.toleranceAmountCents,
+        forceSignature: body.forceSignature,
+      });
+      if (reconciled) {
+        results.push(reconciled);
+      }
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_settlement_receipt.reconcile.bulk",
+      entityType: "billing_settlement_receipt",
+      entityId: body.provider ?? "all",
+      metadata: {
+        status: body.status,
+        limit: body.limit,
+        toleranceEvents: body.toleranceEvents,
+        toleranceAmountCents: body.toleranceAmountCents,
+        forceSignature: body.forceSignature,
+        attempted: candidates.rows.length,
+        reconciled: results.length,
+      },
+    });
+
+    return {
+      ok: true,
+      attempted: candidates.rows.length,
+      reconciled: results.length,
+      results,
     };
   });
 

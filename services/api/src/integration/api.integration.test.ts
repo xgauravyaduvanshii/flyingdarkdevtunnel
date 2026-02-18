@@ -17,6 +17,8 @@ const defaults: Record<string, string> = {
   RELAY_REGION_WEIGHTS: "eu=eu-edge-integration-1:10|eu-edge-integration-2:1",
   RELAY_FAILOVER_REGIONS: "ap=eu,us;eu=us",
   BILLING_RUNBOOK_SIGNING_SECRET: "integration_runbook_secret_32_chars_minimum",
+  BILLING_SETTLEMENT_SIGNING_SECRET: "integration_settlement_secret_32_chars_minimum",
+  BILLING_SETTLEMENT_MAX_AGE_SECONDS: "300",
   AUTH_ABUSE_BLOCK_THRESHOLD: "1",
   AUTH_ABUSE_BLOCK_WINDOW_MINUTES: "30",
   CERT_EVENT_INGEST_TOKEN: "integration_cert_ingest_token",
@@ -328,6 +330,162 @@ describe("api integration", () => {
     expect(Number.parseInt(adminFinanceBody.stats.total, 10)).toBeGreaterThan(0);
     expect(Number.parseInt(adminFinanceBody.stats.refunds, 10)).toBeGreaterThan(0);
     expect(Number.parseInt(adminFinanceBody.stats.cancellations, 10)).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("ingests signed settlement receipts and reconciles them through admin controls", async () => {
+    const email = `integration-settlement-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Settlement Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const accessToken = (registerRes.json() as { accessToken: string }).accessToken;
+    const claims = jwt.verify(accessToken, process.env.JWT_SECRET!) as { orgId: string };
+
+    const settlementOffsetMs = Number.parseInt(randomUUID().replace(/-/g, "").slice(0, 6), 16);
+    const settlementBaseAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000 + settlementOffsetMs);
+    const periodStart = new Date(settlementBaseAt.getTime() - 60 * 1000);
+    const periodEnd = new Date(settlementBaseAt.getTime() + 60 * 1000);
+    await app.db.query(
+      `
+        INSERT INTO billing_finance_events (
+          id,
+          org_id,
+          provider,
+          event_type,
+          status,
+          external_id,
+          amount_cents,
+          currency,
+          created_at,
+          updated_at
+        )
+        VALUES
+          ($1, $2, 'stripe', 'refund', 'processed', $3, 1500, 'USD', $6, $6),
+          ($4, $2, 'stripe', 'refund', 'processed', $5, 2500, 'USD', $6, $6)
+      `,
+      [
+        randomUUID(),
+        claims.orgId,
+        `settlement_evt_${randomUUID().replace(/-/g, "")}`,
+        randomUUID(),
+        `settlement_evt_${randomUUID().replace(/-/g, "")}`,
+        settlementBaseAt,
+      ],
+    );
+
+    const batchIdMatched = `batch_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const matchedPayload = JSON.stringify({
+      provider: "stripe",
+      batchId: batchIdMatched,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      totalEvents: 2,
+      totalAmountCents: 4000,
+      currency: "USD",
+      payload: { source: "integration-test", mode: "matched" },
+    });
+    const matchedTimestamp = `${Math.floor(Date.now() / 1000)}`;
+    const matchedSignature = createHmac("sha256", process.env.BILLING_SETTLEMENT_SIGNING_SECRET!)
+      .update(`${matchedTimestamp}.${matchedPayload}`)
+      .digest("hex");
+
+    const ingestMatchedRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/settlement-receipts",
+      headers: {
+        "content-type": "application/json",
+        "x-fdt-settlement-timestamp": matchedTimestamp,
+        "x-fdt-settlement-signature": matchedSignature,
+      },
+      payload: matchedPayload,
+    });
+    expect(ingestMatchedRes.statusCode).toBe(202);
+    const ingestMatchedBody = ingestMatchedRes.json() as { id: string; reconciliationStatus: string };
+    expect(ingestMatchedBody.reconciliationStatus).toBe("pending");
+
+    const invalidSignatureRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/settlement-receipts",
+      headers: {
+        "content-type": "application/json",
+        "x-fdt-settlement-timestamp": `${Math.floor(Date.now() / 1000)}`,
+        "x-fdt-settlement-signature": "deadbeef",
+      },
+      payload: matchedPayload,
+    });
+    expect(invalidSignatureRes.statusCode).toBe(401);
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/billing-settlement-receipts?provider=stripe&limit=20",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listBody = listRes.json() as {
+      receipts: Array<{ id: string; batch_id: string; reconciliation_status: string }>;
+    };
+    expect(listBody.receipts.some((row) => row.id === ingestMatchedBody.id && row.batch_id === batchIdMatched)).toBe(true);
+
+    const reconcileMatchedRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/billing-settlement-receipts/${ingestMatchedBody.id}/reconcile`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { toleranceEvents: 0, toleranceAmountCents: 0 },
+    });
+    expect(reconcileMatchedRes.statusCode).toBe(200);
+    const reconcileMatchedBody = reconcileMatchedRes.json() as {
+      receipt: { reconciliationStatus: string; deltaEvents: number; deltaAmountCents: number };
+    };
+    expect(reconcileMatchedBody.receipt.reconciliationStatus).toBe("matched");
+    expect(reconcileMatchedBody.receipt.deltaEvents).toBe(0);
+    expect(reconcileMatchedBody.receipt.deltaAmountCents).toBe(0);
+
+    const batchIdDelta = `batch_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const deltaPayload = JSON.stringify({
+      provider: "stripe",
+      batchId: batchIdDelta,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      totalEvents: 1,
+      totalAmountCents: 1000,
+      currency: "USD",
+      payload: { source: "integration-test", mode: "delta" },
+    });
+    const deltaTimestamp = `${Math.floor(Date.now() / 1000)}`;
+    const deltaSignature = createHmac("sha256", process.env.BILLING_SETTLEMENT_SIGNING_SECRET!)
+      .update(`${deltaTimestamp}.${deltaPayload}`)
+      .digest("hex");
+
+    const ingestDeltaRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/settlement-receipts",
+      headers: {
+        "content-type": "application/json",
+        "x-fdt-settlement-timestamp": deltaTimestamp,
+        "x-fdt-settlement-signature": deltaSignature,
+      },
+      payload: deltaPayload,
+    });
+    expect(ingestDeltaRes.statusCode).toBe(202);
+    const ingestDeltaBody = ingestDeltaRes.json() as { id: string };
+
+    const reconcileDeltaRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/billing-settlement-receipts/${ingestDeltaBody.id}/reconcile`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { toleranceEvents: 0, toleranceAmountCents: 0 },
+    });
+    expect(reconcileDeltaRes.statusCode).toBe(200);
+    const reconcileDeltaBody = reconcileDeltaRes.json() as {
+      receipt: { reconciliationStatus: string; deltaEvents: number; deltaAmountCents: number };
+    };
+    expect(reconcileDeltaBody.receipt.reconciliationStatus).toBe("delta");
+    expect(reconcileDeltaBody.receipt.deltaEvents).toBeGreaterThan(0);
+    expect(reconcileDeltaBody.receipt.deltaAmountCents).toBeGreaterThan(0);
   }, 30_000);
 
   it("lists and exports invoice and tax records for user and admin scopes", async () => {
@@ -984,7 +1142,9 @@ describe("api integration", () => {
       clusterId: "cluster-eu",
       sourceEventId: `evt_cert_${randomUUID().replace(/-/g, "")}`,
       domainId,
-      eventType: "renewal_failed",
+      callbackClass: "renewal",
+      callbackAction: "failed",
+      callbackAttempt: 4,
       reason: "acme challenge timed out",
     });
     const certTimestamp = `${Math.floor(Date.now() / 1000)}`;
@@ -1013,8 +1173,25 @@ describe("api integration", () => {
       headers: { authorization: `Bearer ${accessToken}` },
     });
     expect(eventsRes.statusCode).toBe(200);
-    const eventsBody = eventsRes.json() as { events: Array<{ event_type: string; status: string }> };
-    expect(eventsBody.events.some((event) => event.event_type === "renewal_failed" && event.status === "pending")).toBe(true);
+    const eventsBody = eventsRes.json() as {
+      events: Array<{
+        event_type: string;
+        status: string;
+        callback_class: string | null;
+        callback_action: string | null;
+        callback_attempt: number | null;
+      }>;
+    };
+    expect(
+      eventsBody.events.some(
+        (event) =>
+          event.event_type === "renewal_failed" &&
+          event.status === "pending" &&
+          event.callback_class === "renewal" &&
+          event.callback_action === "failed" &&
+          event.callback_attempt === 4,
+      ),
+    ).toBe(true);
 
     const adminEventsRes = await app.inject({
       method: "GET",
@@ -1023,12 +1200,47 @@ describe("api integration", () => {
     });
     expect(adminEventsRes.statusCode).toBe(200);
     const adminEventsBody = adminEventsRes.json() as {
-      events: Array<{ id: string; domain: string }>;
+      events: Array<{ id: string; domain: string; callback_class: string | null; callback_attempt: number | null }>;
       stats: { pending: string; failed: string };
     };
-    const adminEventId = adminEventsBody.events.find((event) => event.domain === domainName)?.id;
+    const adminEvent = adminEventsBody.events.find((event) => event.domain === domainName);
+    const adminEventId = adminEvent?.id;
     expect(adminEventId).toBeTruthy();
+    expect(adminEvent?.callback_class).toBe("renewal");
+    expect(adminEvent?.callback_attempt).toBe(4);
     expect(Number.parseInt(adminEventsBody.stats.pending, 10)).toBeGreaterThan(0);
+
+    const incidentsRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/cert-incidents?status=open&domain=${encodeURIComponent(domainName)}&limit=20`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(incidentsRes.statusCode).toBe(200);
+    const incidentsBody = incidentsRes.json() as {
+      incidents: Array<{ id: string; incident_type: string; tier: number; status: string }>;
+    };
+    const incident = incidentsBody.incidents.find((row) => row.incident_type === "renewal_failed");
+    expect(incident).toBeTruthy();
+    expect(incident?.tier).toBe(3);
+    expect(incident?.status).toBe("open");
+
+    const ackIncidentRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/cert-incidents/${incident!.id}/ack`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { note: "on-call triage acknowledged" },
+    });
+    expect(ackIncidentRes.statusCode).toBe(200);
+
+    const resolveIncidentRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/cert-incidents/${incident!.id}/resolve`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { note: "manual runbook completed" },
+    });
+    expect(resolveIncidentRes.statusCode).toBe(200);
+    const resolveIncidentBody = resolveIncidentRes.json() as { incident: { status: string } };
+    expect(resolveIncidentBody.incident.status).toBe("resolved");
 
     await app.db.query(`UPDATE certificate_lifecycle_events SET status = 'failed', retry_count = 3 WHERE id = $1`, [adminEventId]);
 

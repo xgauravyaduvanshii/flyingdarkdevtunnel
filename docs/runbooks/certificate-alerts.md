@@ -22,6 +22,7 @@
 2. Query domain state:
    - `GET /v1/domains/custom`
    - `GET /v1/domains/custom/:id/cert-events`
+   - `GET /v1/admin/cert-incidents?status=open&domain=...`
 3. Verify latest fields on `custom_domains`:
    - `tls_status`
    - `cert_failure_policy`
@@ -50,6 +51,9 @@
    - `tls_status=issued`
    - `cert_last_event_type` is success event
    - `tls_not_after` refreshed
+4. Close incident lifecycle:
+   - `POST /v1/admin/cert-incidents/:id/ack`
+   - `POST /v1/admin/cert-incidents/:id/resolve`
 
 ## Exit criteria
 - Domain returns to `issued` or accepted `passthrough_unverified`.

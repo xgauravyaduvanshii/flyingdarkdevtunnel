@@ -43,6 +43,8 @@ export const apiEnvSchema = z.object({
   BILLING_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(86400),
   BILLING_RUNBOOK_SIGNING_SECRET: z.string().optional(),
   BILLING_RUNBOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(300),
+  BILLING_SETTLEMENT_SIGNING_SECRET: z.string().optional(),
+  BILLING_SETTLEMENT_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(300),
   AUTH_ABUSE_BLOCK_THRESHOLD: z.coerce.number().int().positive().optional().default(3),
   AUTH_ABUSE_BLOCK_WINDOW_MINUTES: z.coerce.number().int().positive().optional().default(30),
   CERT_EVENT_INGEST_TOKEN: z.string().optional(),
