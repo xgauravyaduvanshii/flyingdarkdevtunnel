@@ -1,0 +1,42 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Protocol capability grid">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Protocol Capability Grid</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Coverage across HTTP, HTTPS, and raw TCP tunnel modes.</text>
+
+  <rect x="80" y="140" width="1140" height="74" rx="12" fill="#0F172A"/>
+  <text x="120" y="186" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Capability</text>
+  <text x="700" y="186" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">HTTP/HTTPS</text>
+  <text x="1030" y="186" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">TCP</text>
+
+  <rect x="80" y="230" width="1140" height="84" rx="12" fill="#E2E8F0"/>
+  <text x="120" y="280" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="22">Public URL and edge routing</text>
+  <text x="760" y="280" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+  <text x="1060" y="280" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+
+  <rect x="80" y="326" width="1140" height="84" rx="12" fill="#CBD5E1"/>
+  <text x="120" y="376" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="22">TLS termination and passthrough modes</text>
+  <text x="760" y="376" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+  <text x="1060" y="376" fill="#F97316" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Limited</text>
+
+  <rect x="80" y="422" width="1140" height="84" rx="12" fill="#E2E8F0"/>
+  <text x="120" y="472" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="22">Inspection, replay, and payload controls</text>
+  <text x="760" y="472" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+  <text x="1060" y="472" fill="#F97316" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Stream logs</text>
+
+  <rect x="80" y="518" width="1140" height="84" rx="12" fill="#CBD5E1"/>
+  <text x="120" y="568" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="22">Basic auth and CIDR allowlist policy</text>
+  <text x="760" y="568" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+  <text x="1060" y="568" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+
+  <rect x="80" y="614" width="1140" height="84" rx="12" fill="#E2E8F0"/>
+  <text x="120" y="664" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="22">Reserved names and paid entitlement gates</text>
+  <text x="760" y="664" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+  <text x="1060" y="664" fill="#16A34A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Yes</text>
+</svg>

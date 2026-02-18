@@ -1,0 +1,46 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Persona use cases">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Persona and Use-Case Map</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Different users, one platform model: secure exposure, visibility, and control.</text>
+
+  <rect x="72" y="130" width="360" height="250" rx="18" fill="#0EA5E9"/>
+  <text x="104" y="176" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Backend Developer</text>
+  <text x="104" y="208" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">Webhook callbacks, API demos, local debugging</text>
+  <text x="104" y="236" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">Uses: HTTP tunnel + request replay</text>
+  <text x="104" y="264" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="15">Needs: fast iteration + stable public URL</text>
+
+  <rect x="470" y="130" width="360" height="250" rx="18" fill="#22C55E"/>
+  <text x="502" y="176" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">SRE / Platform</text>
+  <text x="502" y="208" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">Incident response, resilience, policy guardrails</text>
+  <text x="502" y="236" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">Uses: dashboards + runbook integration</text>
+  <text x="502" y="264" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="15">Needs: deterministic recovery paths</text>
+
+  <rect x="868" y="130" width="360" height="250" rx="18" fill="#F97316"/>
+  <text x="900" y="176" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Security Engineer</text>
+  <text x="900" y="208" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">Exposure control, auditability, secret hygiene</text>
+  <text x="900" y="236" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">Uses: IP policies + token revocation</text>
+  <text x="900" y="264" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="15">Needs: traceable security events</text>
+
+  <rect x="72" y="430" width="548" height="250" rx="18" fill="#6366F1"/>
+  <text x="104" y="476" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Finance / Ops</text>
+  <text x="104" y="508" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Subscription health, reconciliation, exports</text>
+  <text x="104" y="536" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Uses: billing workers + reporting tools</text>
+  <text x="104" y="564" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="15">Needs: provider parity and retries</text>
+
+  <rect x="654" y="430" width="574" height="250" rx="18" fill="#0F172A"/>
+  <text x="686" y="476" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Product and Team Lead</text>
+  <text x="686" y="508" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">Wants a single platform for dev speed and governance</text>
+  <text x="686" y="536" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">Uses: admin panel, plan controls, roadmap data</text>
+  <text x="686" y="564" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">Needs: feature velocity without trust regressions</text>
+
+  <line x1="252" y1="380" x2="252" y2="430" stroke="#334155" stroke-width="3"/>
+  <line x1="650" y1="380" x2="650" y2="430" stroke="#334155" stroke-width="3"/>
+  <line x1="1048" y1="380" x2="1048" y2="430" stroke="#334155" stroke-width="3"/>
+</svg>
