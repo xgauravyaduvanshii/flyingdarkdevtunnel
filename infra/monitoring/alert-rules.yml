@@ -66,6 +66,26 @@ groups:
           summary: Certificate lifecycle event backlog is growing
           description: "pending_events={{ $value }}"
           runbook_url: docs/runbooks/ops-oncall.md#certificate-event-backlog
+      - alert: CertificateRenewalSlaBreach
+        expr: fdt_cert_domains_renewal_sla_breach_total > 0
+        for: 5m
+        labels:
+          severity: page
+          team: edge
+        annotations:
+          summary: Certificate renewal SLA breach detected
+          description: "domains_breached={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#certificate-renewal-sla-breach
+      - alert: CertificateRenewalSlaWarning
+        expr: fdt_cert_domains_renewal_sla_warning_total > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: edge
+        annotations:
+          summary: Certificate renewal SLA warning window active
+          description: "domains_warning={{ $value }}"
+          runbook_url: docs/runbooks/ops-oncall.md#certificate-renewal-sla-warning
 
   - name: relay-capacity
     interval: 30s

@@ -336,7 +336,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               last_error,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13, 0, NULL, NULL, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13, $14, 0, NULL, NULL, NOW())
           `,
           [
             eventId,
@@ -376,7 +376,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             provenance_subject,
             provenance_verified
           )
-          VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12)
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12, $13)
         `,
         [
           eventId,

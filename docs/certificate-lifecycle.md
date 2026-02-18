@@ -43,7 +43,7 @@ Ingress endpoint:
 - `passthrough_unverified`: passthrough host (upstream-owned cert).
 
 ## Current limits
-- Event ingest token currently protects source; deeper source attestation is still pending.
+- Event ingest now supports per-source/per-cluster HMAC provenance validation (`CERT_EVENT_SOURCE_KEYS`) with timestamp freshness checks.
 - Probes still run as fallback and process a bounded batch.
 - Multi-region cert-state aggregation is not yet implemented.
 
@@ -52,6 +52,9 @@ Ingress endpoint:
   - `fdt_cert_domains_total{status=...}`
   - `fdt_cert_events_pending_total`
   - `fdt_cert_events_failed_total`
+  - `fdt_cert_domains_renewal_sla_warning_total`
+  - `fdt_cert_domains_renewal_sla_breach_total`
+  - `fdt_cert_renewal_sla_alerts_sent_total`
   - `fdt_cert_runbook_triggers_total`
   - `fdt_cert_runbook_trigger_failures_total`
 - Alert rules:
@@ -65,9 +68,11 @@ Ingress endpoint:
 - `CERT_RUNBOOK_WEBHOOK_URL`
 - `CERT_RUNBOOK_SIGNING_SECRET`
 - `CERT_RUNBOOK_COOLDOWN_SECONDS`
+- `CERT_DEPLOYMENT_ENV` (`dev|staging|prod`)
+- `CERT_RENEWAL_SLA_WARNING_HOURS`
 - `CERT_METRICS_PORT`
 
 ## Next hardening
-- Add source provenance verification for cert manager emitters.
-- Add renewal-SLA paging and incident playbooks.
+- Add multi-cluster cert-manager delivery replay and dead-letter queue controls.
+- Add region-level certificate-state aggregation for active-active relay edges.
 - Add multi-region cert-state aggregation.

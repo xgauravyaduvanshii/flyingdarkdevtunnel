@@ -59,6 +59,10 @@
 - Prometheus config:
   - `infra/monitoring/prometheus.yml`
   - `infra/monitoring/alert-rules.yml`
+- Grafana provisioning:
+  - `infra/monitoring/grafana/provisioning/datasources/prometheus.yml`
+  - `infra/monitoring/grafana/provisioning/dashboards/dashboards.yml`
+  - `infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`
 - Worker metrics endpoints:
   - billing: `worker-billing:9464/metrics`
   - certificates: `worker-certificates:9465/metrics`

@@ -12,6 +12,8 @@ const envSchema = z.object({
   CERT_WORKER_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   TLS_PROBE_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(8),
   CERT_EXPIRY_WARN_DAYS: z.coerce.number().int().positive().default(30),
+  CERT_DEPLOYMENT_ENV: z.enum(["dev", "staging", "prod"]).default("dev"),
+  CERT_RENEWAL_SLA_WARNING_HOURS: z.coerce.number().int().positive().default(72),
   CERT_ALERT_WEBHOOK_URL: z.string().url().optional(),
   CERT_ALERT_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(1800),
   CERT_RUNBOOK_WEBHOOK_URL: z.string().url().optional(),
@@ -35,6 +37,7 @@ const lastRunbookAtByKey = new Map<string, number>();
 let certAlertsSentTotal = 0;
 let certRunbooksTriggeredTotal = 0;
 let certRunbookFailuresTotal = 0;
+let certRenewalSlaAlertsSentTotal = 0;
 
 type DomainTlsStatus = "issued" | "expiring" | "tls_error" | "passthrough_unverified" | "pending_route" | "pending_issue";
 type CertFailurePolicy = "standard" | "strict" | "hold";
@@ -67,6 +70,17 @@ type AlertState = {
   error: string | null;
 };
 
+type RenewalSlaAlertClass = "renewal_sla_warning" | "renewal_sla_breach";
+
+type RenewalSlaAlertState = {
+  domainId: string;
+  domain: string;
+  tlsMode: "termination" | "passthrough";
+  status: DomainTlsStatus;
+  renewalDueAt: Date;
+  hoursUntilDue: number;
+};
+
 type CertEventType =
   | "issuance_succeeded"
   | "issuance_failed"
@@ -79,6 +93,8 @@ type CertMetricsSnapshot = {
   domainStatusCounts: Record<DomainTlsStatus, number>;
   pendingEventCount: number;
   failedEventCount: number;
+  renewalSlaWarningCount: number;
+  renewalSlaBreachCount: number;
 };
 
 let certMetricsSnapshot: CertMetricsSnapshot = {
@@ -93,6 +109,8 @@ let certMetricsSnapshot: CertMetricsSnapshot = {
   },
   pendingEventCount: 0,
   failedEventCount: 0,
+  renewalSlaWarningCount: 0,
+  renewalSlaBreachCount: 0,
 };
 
 type CertificateEventRow = {
@@ -166,6 +184,15 @@ function renderMetrics(): string {
   lines.push("# HELP fdt_cert_metrics_generated_at_seconds Last metrics snapshot generation time.");
   lines.push("# TYPE fdt_cert_metrics_generated_at_seconds gauge");
   lines.push(`fdt_cert_metrics_generated_at_seconds ${Math.floor(certMetricsSnapshot.generatedAt / 1000)}`);
+  lines.push("# HELP fdt_cert_domains_renewal_sla_warning_total Domains approaching renewal SLA warning window.");
+  lines.push("# TYPE fdt_cert_domains_renewal_sla_warning_total gauge");
+  lines.push(`fdt_cert_domains_renewal_sla_warning_total ${certMetricsSnapshot.renewalSlaWarningCount}`);
+  lines.push("# HELP fdt_cert_domains_renewal_sla_breach_total Domains that exceeded renewal SLA.");
+  lines.push("# TYPE fdt_cert_domains_renewal_sla_breach_total gauge");
+  lines.push(`fdt_cert_domains_renewal_sla_breach_total ${certMetricsSnapshot.renewalSlaBreachCount}`);
+  lines.push("# HELP fdt_cert_renewal_sla_alerts_sent_total Renewal SLA alerts emitted by worker.");
+  lines.push("# TYPE fdt_cert_renewal_sla_alerts_sent_total counter");
+  lines.push(`fdt_cert_renewal_sla_alerts_sent_total ${certRenewalSlaAlertsSentTotal}`);
 
   return `${lines.join("\n")}\n`;
 }
@@ -208,29 +235,35 @@ function formatAlertMessage(state: AlertState): string {
 }
 
 async function triggerRunbookForAlert(state: AlertState): Promise<void> {
+  await triggerRunbookPayload(
+    {
+      source: "worker-certificates",
+      type: "certificate.alert",
+      severity: state.status === "tls_error" ? "critical" : "warning",
+      incidentRoute: "ticket",
+      domainId: state.domainId,
+      domain: state.domain,
+      tlsMode: state.tlsMode,
+      status: state.status,
+      notAfter: state.notAfter ? state.notAfter.toISOString() : null,
+      error: state.error,
+      timestamp: new Date().toISOString(),
+    },
+    `${alertKeyFor(state)}:runbook`,
+  );
+}
+
+async function triggerRunbookPayload(payloadObject: Record<string, unknown>, key: string): Promise<void> {
   if (!env.CERT_RUNBOOK_WEBHOOK_URL) {
     return;
   }
 
-  const key = `${alertKeyFor(state)}:runbook`;
   const now = Date.now();
   const last = lastRunbookAtByKey.get(key) ?? 0;
   if (now - last < env.CERT_RUNBOOK_COOLDOWN_SECONDS * 1000) {
     return;
   }
 
-  const payloadObject = {
-    source: "worker-certificates",
-    type: "certificate.alert",
-    severity: state.status === "tls_error" ? "critical" : "warning",
-    domainId: state.domainId,
-    domain: state.domain,
-    tlsMode: state.tlsMode,
-    status: state.status,
-    notAfter: state.notAfter ? state.notAfter.toISOString() : null,
-    error: state.error,
-    timestamp: new Date().toISOString(),
-  };
   const payload = JSON.stringify(payloadObject);
   const headers: Record<string, string> = { "content-type": "application/json" };
 
@@ -295,6 +328,106 @@ async function maybeEmitAlert(state: AlertState): Promise<void> {
   } catch (error) {
     certRunbookFailuresTotal += 1;
     console.error("[worker-certificates] runbook alert delivery failed", error);
+  }
+
+  lastAlertAtByKey.set(key, now);
+}
+
+function renewalSlaClass(hoursUntilDue: number): RenewalSlaAlertClass | null {
+  if (hoursUntilDue <= 0) {
+    return "renewal_sla_breach";
+  }
+  if (hoursUntilDue <= env.CERT_RENEWAL_SLA_WARNING_HOURS) {
+    return "renewal_sla_warning";
+  }
+  return null;
+}
+
+function renewalSlaSeverity(classification: RenewalSlaAlertClass): "warning" | "critical" {
+  if (classification === "renewal_sla_breach" && env.CERT_DEPLOYMENT_ENV === "prod") {
+    return "critical";
+  }
+  return "warning";
+}
+
+function renewalSlaRoute(classification: RenewalSlaAlertClass): "ticket" | "page" {
+  if (classification === "renewal_sla_breach" && env.CERT_DEPLOYMENT_ENV === "prod") {
+    return "page";
+  }
+  return "ticket";
+}
+
+function renewalSlaAlertKey(state: RenewalSlaAlertState, classification: RenewalSlaAlertClass): string {
+  return `${state.domainId}:${classification}`;
+}
+
+async function maybeEmitRenewalSlaAlert(state: RenewalSlaAlertState): Promise<void> {
+  const classification = renewalSlaClass(state.hoursUntilDue);
+  if (!classification) return;
+
+  const key = renewalSlaAlertKey(state, classification);
+  const now = Date.now();
+  const last = lastAlertAtByKey.get(key) ?? 0;
+  if (now - last < env.CERT_ALERT_COOLDOWN_SECONDS * 1000) {
+    return;
+  }
+
+  const severity = renewalSlaSeverity(classification);
+  const incidentRoute = renewalSlaRoute(classification);
+  console.warn(
+    `[worker-certificates] renewal sla ${classification} domain=${state.domain} status=${state.status} due_at=${state.renewalDueAt.toISOString()} hours_until_due=${state.hoursUntilDue.toFixed(1)} env=${env.CERT_DEPLOYMENT_ENV}`,
+  );
+  certRenewalSlaAlertsSentTotal += 1;
+
+  if (env.CERT_ALERT_WEBHOOK_URL) {
+    try {
+      await fetch(env.CERT_ALERT_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: "worker-certificates",
+          type: "certificate.renewal_sla",
+          classification,
+          severity,
+          incidentRoute,
+          domainId: state.domainId,
+          domain: state.domain,
+          tlsMode: state.tlsMode,
+          status: state.status,
+          renewalDueAt: state.renewalDueAt.toISOString(),
+          hoursUntilDue: Number.parseFloat(state.hoursUntilDue.toFixed(2)),
+          warningWindowHours: env.CERT_RENEWAL_SLA_WARNING_HOURS,
+          environment: env.CERT_DEPLOYMENT_ENV,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+    } catch (error) {
+      console.error("[worker-certificates] renewal SLA alert webhook delivery failed", error);
+    }
+  }
+
+  try {
+    await triggerRunbookPayload(
+      {
+        source: "worker-certificates",
+        type: "certificate.renewal_sla",
+        classification,
+        severity,
+        incidentRoute,
+        domainId: state.domainId,
+        domain: state.domain,
+        tlsMode: state.tlsMode,
+        status: state.status,
+        renewalDueAt: state.renewalDueAt.toISOString(),
+        hoursUntilDue: Number.parseFloat(state.hoursUntilDue.toFixed(2)),
+        environment: env.CERT_DEPLOYMENT_ENV,
+        timestamp: new Date().toISOString(),
+      },
+      `${key}:runbook`,
+    );
+  } catch (error) {
+    certRunbookFailuresTotal += 1;
+    console.error("[worker-certificates] renewal SLA runbook delivery failed", error);
   }
 
   lastAlertAtByKey.set(key, now);
@@ -667,6 +800,44 @@ async function syncCertificateStateByProbe(): Promise<void> {
   }
 }
 
+async function checkRenewalSlaEscalations(): Promise<void> {
+  const candidates = await db.query<{
+    id: string;
+    domain: string;
+    tls_mode: "termination" | "passthrough";
+    tls_status: DomainTlsStatus;
+    cert_renewal_due_at: Date | null;
+  }>(
+    `
+      SELECT id, domain, tls_mode, tls_status, cert_renewal_due_at
+      FROM custom_domains
+      WHERE verified = TRUE
+        AND tls_mode = 'termination'
+        AND cert_renewal_due_at IS NOT NULL
+        AND cert_renewal_due_at <= NOW() + ($1 || ' hours')::interval
+      ORDER BY cert_renewal_due_at ASC
+      LIMIT 500
+    `,
+    [env.CERT_RENEWAL_SLA_WARNING_HOURS],
+  );
+
+  const nowMs = Date.now();
+  for (const row of candidates.rows) {
+    if (!row.cert_renewal_due_at) {
+      continue;
+    }
+    const hoursUntilDue = (row.cert_renewal_due_at.getTime() - nowMs) / (1000 * 60 * 60);
+    await maybeEmitRenewalSlaAlert({
+      domainId: row.id,
+      domain: row.domain,
+      tlsMode: row.tls_mode,
+      status: row.tls_status,
+      renewalDueAt: row.cert_renewal_due_at,
+      hoursUntilDue,
+    });
+  }
+}
+
 async function refreshMetricsSnapshot(): Promise<void> {
   const domainStatusRows = await db.query<{ tls_status: DomainTlsStatus; count: string }>(
     `
@@ -698,11 +869,35 @@ async function refreshMetricsSnapshot(): Promise<void> {
   );
 
   const counts = eventRows.rows[0] ?? { pending_count: "0", failed_count: "0" };
+  const renewalRows = await db.query<{ warning_count: string; breach_count: string }>(
+    `
+      SELECT
+        COUNT(*) FILTER (
+          WHERE verified = TRUE
+            AND tls_mode = 'termination'
+            AND cert_renewal_due_at IS NOT NULL
+            AND cert_renewal_due_at > NOW()
+            AND cert_renewal_due_at <= NOW() + ($1 || ' hours')::interval
+        )::text AS warning_count,
+        COUNT(*) FILTER (
+          WHERE verified = TRUE
+            AND tls_mode = 'termination'
+            AND cert_renewal_due_at IS NOT NULL
+            AND cert_renewal_due_at <= NOW()
+        )::text AS breach_count
+      FROM custom_domains
+    `,
+    [env.CERT_RENEWAL_SLA_WARNING_HOURS],
+  );
+  const renewal = renewalRows.rows[0] ?? { warning_count: "0", breach_count: "0" };
+
   certMetricsSnapshot = {
     generatedAt: Date.now(),
     domainStatusCounts,
     pendingEventCount: Number.parseInt(counts.pending_count, 10) || 0,
     failedEventCount: Number.parseInt(counts.failed_count, 10) || 0,
+    renewalSlaWarningCount: Number.parseInt(renewal.warning_count, 10) || 0,
+    renewalSlaBreachCount: Number.parseInt(renewal.breach_count, 10) || 0,
   };
 }
 
@@ -713,6 +908,7 @@ async function loop(): Promise<void> {
       if (env.CERT_PROBE_FALLBACK_ENABLED) {
         await syncCertificateStateByProbe();
       }
+      await checkRenewalSlaEscalations();
       await refreshMetricsSnapshot();
     } catch (error) {
       console.error("[worker-certificates] sync failed", error);

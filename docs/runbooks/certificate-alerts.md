@@ -7,10 +7,14 @@
   - `certificate_expiring`
   - `issuance_failed`
   - `renewal_failed`
+  - `renewal_sla_warning`
+  - `renewal_sla_breach`
 
 ## Severity policy
 - `SEV-2`: `renewal_failed` or repeated `issuance_failed` on production domains.
+- `SEV-2`: `renewal_sla_breach` in production (`incidentRoute=page`).
 - `SEV-3`: `certificate_expiring` with less than 14 days left.
+- `SEV-3`: `renewal_sla_warning` (ticket route, pre-breach action required).
 - `SEV-4`: transient `tls_error` with automatic recovery on next retry.
 
 ## Immediate triage
@@ -41,6 +45,7 @@
    - `PATCH /v1/domains/custom/:id/failure-policy`
 2. Ingest manual cert event if external cert manager has a definitive outcome:
    - `POST /v1/domains/cert-events`
+   - include provenance headers (`x-cert-source`, `x-cert-cluster`, `x-cert-timestamp`, `x-cert-signature`) when strict validation is enabled.
 3. Confirm recovery:
    - `tls_status=issued`
    - `cert_last_event_type` is success event
