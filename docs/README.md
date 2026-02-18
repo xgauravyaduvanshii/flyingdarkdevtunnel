@@ -11,6 +11,7 @@ This folder contains implementation-focused documentation for engineers operatin
 - `docs/runbooks/certificate-alerts.md`: cert-event incident response and paging checklist.
 - `docs/runbooks/billing-webhook-slo.md`: webhook latency SLO paging and runbook replay response.
 - `docs/runbooks/ops-oncall.md`: alert-to-action runbooks for billing webhook and certificate lifecycle incidents.
+- `infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`: pre-provisioned dashboard for relay, billing, and certificate SLOs.
 
 ## Living documentation
 These docs are updated alongside code changes. The current implementation tracker is at `plan.md`.

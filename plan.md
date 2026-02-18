@@ -132,41 +132,51 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Added admin domain inventory API (`GET /v1/admin/domains`) and admin UI page.
   - Added console-domain expiry/error visibility.
   - Added smoke validation for admin domain visibility and TLS mode mapping.
+- Hardening closure in this cycle:
+  - Added cert-event provenance controls (source+cluster HMAC validation, freshness checks, source activity ledger).
+  - Added relay heartbeat registration API and region-aware edge assignment surfaced in tunnel start/agent exchange.
+  - Added provider-specific dunning cadence and channels, plus finance export sinks (`webhook|s3|warehouse`).
+  - Added nightly resilience CI workflow and relay-capacity alerting.
+  - Added environment-aware renewal SLA escalation in `worker-certificates` with new warning/breach metrics and runbook routing.
+  - Added Grafana auto-provisioning and dashboard for relay, billing, and certificate SLOs.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
-  - Event-driven issuance/renewal status integration shipped; production cert-manager webhook auth/validation hardening remains.
-  - On-call runbook scaffold shipped (`docs/runbooks/certificate-alerts.md`); source provenance validation and stricter emitter identity controls remain.
+  - Event-driven issuance/renewal status integration shipped with per-source/per-cluster provenance verification.
+  - Renewal SLA escalation shipped with environment-aware incident routing (`dev|staging|prod`) and new alert classes.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
   - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
-  - Tune retry and notification policy by provider in production telemetry.
+  - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`); final production tuning remains telemetry-driven.
+- Observability operations:
+  - Relay active/inflight/rejection metrics and alert rules are live.
+  - Grafana auto-provisioned dashboard shipped (`infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`).
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Add stricter cert-manager source validation and per-cluster provenance controls.
-   - Add renewal SLA escalation and incident routing policy tuning by environment.
+   - Add cert-event dead-letter queue tooling and replay controls for multi-cluster cert-manager outages.
+   - Add cross-region cert-state aggregation for active-active relay topologies.
 2. Payment hardening + finance ops:
-   - Provider-specific dunning cadence tuning + richer comms channels.
-   - Finance export sink adapters (S3/object-store, warehouse loaders).
+   - Tune provider retry/dunning policy by live payment telemetry and recovery outcomes.
+   - Add scheduled external sink delivery guarantees and reconciliation checks.
 3. Multi-region edge foundations:
-   - Active relay registration heartbeat and region-aware host scheduling in control plane.
+   - Expand beyond US with weighted region assignment and failover policy drills.
 4. Enterprise controls:
-   - Team/org RBAC expansion.
-   - SSO and immutable audit controls.
+   - SAML/OIDC IdP onboarding and enforcement flows.
+   - SCIM-style org provisioning and advanced role templates.
 5. Performance and resilience:
-  - Promote resilience suite into CI/nightly with environment-specific thresholds.
-  - Add relay metrics dashboards for active in-flight requests and rejected-overlimit counts.
+  - Continue tightening nightly resilience thresholds per environment baseline.
+  - Add chaos experiments for relay/API/Redis dependency failures.
 6. Security hardening:
-   - Secret rotation workflows and token revoke list.
-   - Enhanced abuse/rate limiting and anomaly detection.
+   - Expand anomaly detection into adaptive abuse/rate-limit decisions.
+   - Add periodic secret-rotation automation and verification jobs.
 
 ## Definition of Done (for current hardening track)
-- Domain verification + routing + TLS mode APIs are stable.
-- Relay enforces auth/IP/host-mode policy correctly.
-- CI runs integration tests against ephemeral Postgres/Redis containers.
-- End-to-end smoke test passes in automation.
+- Domain verification + routing + TLS mode APIs are stable. `Complete`
+- Relay enforces auth/IP/host-mode policy correctly. `Complete`
+- CI runs integration tests against ephemeral Postgres/Redis containers. `Complete`
+- End-to-end smoke test passes in automation. `Complete`
 
 ## Update Cadence
 This file should be updated on every major implementation commit with:

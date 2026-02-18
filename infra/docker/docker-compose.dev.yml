@@ -183,6 +183,8 @@ services:
       CERT_WORKER_INTERVAL_SECONDS: 300
       TLS_PROBE_TIMEOUT_SECONDS: 8
       CERT_EXPIRY_WARN_DAYS: 30
+      CERT_DEPLOYMENT_ENV: dev
+      CERT_RENEWAL_SLA_WARNING_HOURS: 72
       CERT_ALERT_WEBHOOK_URL: ""
       CERT_ALERT_COOLDOWN_SECONDS: 1800
       CERT_RUNBOOK_WEBHOOK_URL: ""
@@ -211,6 +213,9 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
 
 volumes:
   fdt-postgres:

@@ -86,6 +86,36 @@ This runbook maps Prometheus alert signals to immediate responder actions.
 1. Increase worker throughput (`CERT_EVENT_BATCH_SIZE`) and reduce loop interval.
 2. Clear poison events by marking failed after root-cause capture.
 
+## Certificate renewal SLA breach
+### Alert
+- `CertificateRenewalSlaBreach`
+
+### First checks
+1. Inspect current breach count from metrics:
+   - `fdt_cert_domains_renewal_sla_breach_total`
+2. Query impacted domains:
+   - `SELECT domain, tls_status, cert_renewal_due_at FROM custom_domains WHERE cert_renewal_due_at <= NOW() ORDER BY cert_renewal_due_at ASC LIMIT 50;`
+3. Confirm recent lifecycle events:
+   - `GET /v1/domains/custom/:id/cert-events`
+
+### Mitigation
+1. For production domains, trigger incident paging and force cert-manager renewal.
+2. Temporarily shift affected hostname to fallback route if available.
+3. If provenance/signature issues block updates, fix source keys and replay events.
+
+## Certificate renewal SLA warning
+### Alert
+- `CertificateRenewalSlaWarning`
+
+### First checks
+1. Inspect warning count from metrics:
+   - `fdt_cert_domains_renewal_sla_warning_total`
+2. Review domains approaching due time and verify current issuance state.
+
+### Mitigation
+1. Preemptively trigger renewal for domains inside warning window.
+2. Confirm cert-manager cluster health and queue depth before breach window.
+
 ## Relay overlimit burst
 ### Alert
 - `RelayOverlimitRejectionsBurst`
