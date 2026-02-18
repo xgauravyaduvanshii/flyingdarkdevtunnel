@@ -4,7 +4,7 @@
 
 # FlyingDarkDevTunnel
 
-Open-source, full-stack tunneling platform inspired by ngrok.
+Open-source tunneling platform that turns localhost services into secure, policy-aware public endpoints.
 
 <p>
   <a href="https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel"><img alt="Open Source" src="https://img.shields.io/badge/Open%20Source-Yes-22c55e?logo=opensourceinitiative&logoColor=white"></a>
@@ -16,6 +16,14 @@ Open-source, full-stack tunneling platform inspired by ngrok.
   <img alt="Payments" src="https://img.shields.io/badge/Payments-Stripe%20%7C%20Razorpay%20%7C%20PayPal-eab308?logo=stripe&logoColor=white">
 </p>
 <p>
+  <a href="docs/how-it-works.md">How It Works</a>
+  ·
+  <a href="docs/architecture.md">Architecture</a>
+  ·
+  <a href="docs/testing-and-ci.md">Testing and CI</a>
+  ·
+  <a href="docs/runbooks/ops-oncall.md">Runbooks</a>
+  ·
   <a href="https://github.com/xgauravyaduvanshii">Owner: xgauravyaduvanshii</a>
   ·
   <a href="https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel">Repository Home</a>
@@ -25,68 +33,170 @@ Open-source, full-stack tunneling platform inspired by ngrok.
 
 ---
 
-## What This Project Does
+## Platform Story
 
-FlyingDarkDevTunnel lets you expose local services to the Internet using secure, policy-aware tunnels.
+FlyingDarkDevTunnel is built for teams that need more than a temporary tunnel URL.  
+It combines data-plane speed, control-plane policy, payment operations, and production-grade runbook discipline in one monorepo.
 
-This repository is not only a tunnel utility, it is an end-to-end platform blueprint:
-- a high-performance relay and agent data path,
-- a SaaS-ready control plane,
-- enterprise-minded security controls,
-- billing and reconciliation operations,
-- and production-style runbook and observability foundations.
+This project is designed so that each critical behavior has:
+- explicit ownership,
+- deterministic retry/reconcile paths,
+- and measurable operational signals.
 
-It is designed for:
-- webhook testing and callback development,
-- public demo links for local apps,
-- temporary secure developer access,
-- TCP forwarding use cases (SSH/database/IoT),
-- team-managed dev/test edge access with auditability.
+![Platform Pillars](docs/assets/platform-pillars.svg)
 
 ---
 
-## Product Capabilities
+## Why Teams Use It
+
+- Ship webhook integrations without deploying staging environments for every branch.
+- Expose demo and QA environments safely with auth/IP controls.
+- Tunnel raw TCP services for SSH, DB diagnostics, and IoT flows.
+- Manage billing entitlements and audit trails from the same platform model.
+- Run with operational confidence using dashboards, alerts, and recovery runbooks.
+
+---
+
+## Capability Matrix
 
 | Capability Group | Included |
 |---|---|
-| Tunnel Types | HTTP, HTTPS, raw TCP |
+| Tunnel Protocols | HTTP, HTTPS, raw TCP |
 | URL Strategy | random URLs, reserved subdomains, custom domains |
-| TLS Modes | termination and passthrough |
-| Security Controls | basic auth, IP allowlist, token security, signed callbacks |
-| Observability | request inspection, replay, metrics, logs, dashboards |
-| Billing | Stripe/Razorpay/PayPal checkout, webhooks, dunning, finance exports |
-| Admin | user/org controls, role templates, SCIM-like provisioning, audit chain |
-| Resilience | retry/reconcile workflows, backpressure, integration + chaos testing |
+| TLS Modes | edge termination and end-to-end passthrough |
+| Access Controls | JWT auth, basic auth, CIDR allowlist, revocation lists |
+| Inspection | request metadata capture, payload retention controls, replay API |
+| Billing Providers | Stripe, Razorpay, PayPal |
+| Admin Controls | user/org management, entitlement overrides, audit visibility |
+| Reliability Features | retries, dead-letter workflows, replay/reconcile pipelines |
+| Operations | Prometheus, Grafana, alert rules, incident runbooks |
 
 ---
 
-## Architecture
+## Localhost to Internet Journey
 
-### High-level topology
-
+![Local to Public Journey](docs/assets/local-to-public-journey.svg)
 ![Architecture Topology](docs/assets/architecture-topology.svg)
-
-### Request flow (HTTP tunnel)
-
 ![Tunnel Flow](docs/assets/tunnel-flow.svg)
 ![Tunnel Sequence](docs/assets/tunnel-sequence.svg)
-
-### Control-plane tunnel lifecycle
-
 ![Control Plane Lifecycle](docs/assets/control-plane-lifecycle.svg)
+
+This request journey is built around strict checkpoints:
+- identity and entitlement validation before edge registration,
+- relay-side enforcement for host mode, auth, and network policy,
+- stream forwarding between relay and agent,
+- optional inspection and replay for debugging,
+- metrics and audit artifacts for incident response.
 
 ---
 
-## Monorepo Structure
+## CLI Experience
+
+![CLI Command Landscape](docs/assets/cli-command-landscape.svg)
+
+### Core commands
+
+```bash
+cd go
+
+# login
+go run ./agent login \
+  --api http://localhost:4000 \
+  --email you@example.com \
+  --password yourpassword
+
+# http tunnel
+go run ./agent http \
+  --api http://localhost:4000 \
+  --relay ws://localhost:8081/control \
+  --authtoken <authtoken> \
+  --tunnel-id <tunnel-uuid> \
+  --local http://localhost:3000 \
+  --region us
+
+# tcp tunnel
+go run ./agent tcp \
+  --api http://localhost:4000 \
+  --relay ws://localhost:8081/control \
+  --authtoken <authtoken> \
+  --tunnel-id <tunnel-uuid> \
+  --local 127.0.0.1:22 \
+  --region us
+```
+
+For multi-tunnel configs:
+- `ourdomain.yml.example`
+- `go/ourdomain.example.yml`
+
+---
+
+## Monorepo Architecture
 
 ![Monorepo Map](docs/assets/monorepo-map.svg)
 
-Key structure principles:
-- `apps/` is where user/operator experience lives.
-- `services/` is where control-plane orchestration and async domains run.
-- `go/` is where low-latency traffic handling and protocol behavior live.
-- `packages/` keeps shared contracts and build policies consistent.
-- `infra/` and `docs/` encode deployability and operational clarity as first-class artifacts.
+| Path | Role |
+|---|---|
+| `apps/` | User/admin console and docs surface |
+| `services/` | API and workers (billing, inspector, certificates) |
+| `go/` | Relay edge + agent CLI + shared proto contracts |
+| `packages/` | Shared config, UI, SDK, lint/type presets |
+| `infra/` | Docker, migrations, Cloudflare, monitoring |
+| `docs/` | Design references, runbooks, operational guides |
+| `scripts/` | Smoke tests, resilience drills, local bootstrap |
+
+---
+
+## Security and Trust Model
+
+Security is not treated as an add-on; it is encoded in runtime decisions and async pipelines.
+
+![Security Defense Layers](docs/assets/security-defense-layers.svg)
+![Certificate Incident Timeline](docs/assets/cert-incident-timeline.svg)
+![Edge Policy Flow](docs/assets/edge-policy-flow.svg)
+
+Implemented security controls include:
+- hashed authtokens and short-lived signed agent tokens,
+- token revoke-list checks in control and edge flows,
+- relay-side basic auth and CIDR allowlist enforcement,
+- signed provider callbacks for billing and certificate events,
+- immutable audit integrity verification for sensitive admin actions.
+
+See:
+- `docs/security-and-tls.md`
+- `docs/certificate-lifecycle.md`
+- `docs/runbooks/certificate-alerts.md`
+
+---
+
+## Payments and Revenue Operations
+
+Payment architecture is designed for correctness under retries, provider jitter, and delayed settlements.
+
+![Payment Orchestration Layers](docs/assets/payment-orchestration-layers.svg)
+![Billing Reconciliation Flow](docs/assets/billing-reconciliation-flow.svg)
+
+Current behavior includes:
+- real provider mode for Stripe with fallback mock checkout when keys are absent,
+- Razorpay and PayPal provider orchestration hooks,
+- signed webhook ingestion and replay-safe processing,
+- dunning state tracking and finance export packaging workflows.
+
+See:
+- `docs/billing-providers.md`
+- `docs/runbooks/billing-webhook-slo.md`
+- `services/worker-billing/`
+
+---
+
+## Reliability and On-Call Operations
+
+![Release and Operations Loop](docs/assets/release-ops-loop.svg)
+
+Reliability foundation:
+- Prometheus and alert rules under `infra/monitoring/`,
+- Grafana provisioning and dashboard JSON committed in-repo,
+- integration smoke plus resilience scripts in `scripts/`,
+- runbook-first incident handling for certificate, payment, and security classes.
 
 ---
 
@@ -99,15 +209,10 @@ Key structure principles:
 - Go `1.18+`
 - Docker + Docker Compose plugin
 
-### Install
+### Install and run
 
 ```bash
 pnpm install
-```
-
-### Start full local stack
-
-```bash
 pnpm dev:infra
 ```
 
@@ -122,121 +227,7 @@ Core local endpoints:
 
 ---
 
-## Local CLI Usage
-
-```bash
-cd go
-
-# Login
-go run ./agent login \
-  --api http://localhost:4000 \
-  --email you@example.com \
-  --password yourpassword
-
-# Start HTTP tunnel
-go run ./agent http \
-  --api http://localhost:4000 \
-  --relay ws://localhost:8081/control \
-  --authtoken <authtoken> \
-  --tunnel-id <tunnel-uuid> \
-  --local http://localhost:3000 \
-  --region us
-```
-
-For multi-tunnel config mode:
-- `ourdomain.yml.example`
-- `go/ourdomain.example.yml`
-
----
-
-## How We Built It
-
-This platform is intentionally split into clear responsibility layers:
-
-1. **Data plane in Go**  
-   High-throughput relay and agent control/data paths with low overhead and predictable runtime behavior.
-
-2. **Control plane in TypeScript/Fastify**  
-   Fast product iteration for auth, billing, admin, API contracts, and policy orchestration.
-
-3. **Workers for async domains**  
-   Billing reconciliation, request replay/retention, and certificate lifecycle run in isolated loops.
-
-4. **Monorepo for consistency**  
-   Shared config schemas, lint/type rules, CI workflows, and deployment definitions stay in sync.
-
-5. **Ops-first hardening model**  
-   Metrics, alerting, runbooks, replay/reconcile tooling, and chaos workflows are treated as core product features.
-
-### Implementation depth focus
-
-The codebase is structured around failure domains:
-- ingress/runtime failures (relay/agent),
-- control and state drift failures (API/db/redis),
-- asynchronous consistency failures (workers),
-- human operations failures (runbooks, dashboards, audits).
-
-This approach allows faster incident containment because each failure type has:
-- explicit data ownership,
-- a replay/reconcile path,
-- and observable metrics mapped to runbook actions.
-
----
-
-## Security Model
-
-Security-critical behaviors included today:
-
-- hashed secrets/tokens and JWT-based auth flows,
-- token revocation list enforcement,
-- relay-side policy enforcement (basic auth, CIDR allowlist, host-mode guards),
-- signed webhook/callback ingestion (billing + certificate events + runbook triggers),
-- audit-chain integrity controls for admin events,
-- anomaly event capture and adaptive abuse controls,
-- replay/reconcile tooling for billing/cert failure recovery.
-
-![Security Defense Layers](docs/assets/security-defense-layers.svg)
-![Certificate Incident Timeline](docs/assets/cert-incident-timeline.svg)
-
-See:
-- `docs/security-and-tls.md`
-- `docs/certificate-lifecycle.md`
-- `docs/runbooks/`
-
----
-
-## Observability and Reliability
-
-- Prometheus and alert rules: `infra/monitoring/prometheus.yml`, `infra/monitoring/alert-rules.yml`
-- Grafana provisioning and dashboard JSON in `infra/monitoring/grafana/`
-- Resilience scripts:
-  - `scripts/relay-resilience.sh`
-  - `scripts/chaos-drill.sh`
-- Integration smoke:
-  - `scripts/integration-smoke.sh`
-
-![Release and Operations Loop](docs/assets/release-ops-loop.svg)
-
----
-
-## Payment Operations Depth
-
-Payments are handled as a deterministic convergence loop rather than a best-effort webhook callback:
-- provider event signatures and idempotency checks protect ingest correctness,
-- subscription and entitlement deltas are applied through a replay-safe worker pipeline,
-- failed payments flow into dunning + notification orchestration,
-- finance exports and settlement verification close the accounting loop.
-
-![Payment Orchestration Layers](docs/assets/payment-orchestration-layers.svg)
-
-See:
-- `docs/billing-providers.md`
-- `docs/runbooks/billing-webhook-slo.md`
-- `services/worker-billing/`
-
----
-
-## Development Quality Gates
+## Quality Gates
 
 ```bash
 pnpm lint
@@ -260,37 +251,41 @@ pnpm --filter @fdt/api test:integration
 
 ---
 
-## Open Source and Community
+## Documentation
 
-This repository is now configured as an open-source project with full community files:
-
-- License: `LICENSE` (GNU AGPL-3.0)
-- Contributing guide: `CONTRIBUTING.md`
-- Code of conduct: `CODE_OF_CONDUCT.md`
-- Security policy: `SECURITY.md`
-- Support channels: `SUPPORT.md`
-- Changelog: `CHANGELOG.md`
-- Issue templates: `.github/ISSUE_TEMPLATE/`
-- PR template: `.github/PULL_REQUEST_TEMPLATE.md`
-- Dependabot config: `.github/dependabot.yml`
-
-![Contribution Workflow](docs/assets/contribution-workflow.svg)
-
-The project is now explicitly aligned to your GitHub identity:
-- profile: `https://github.com/xgauravyaduvanshii`
-- repo namespace used in metadata and template links.
+- docs hub: `docs/README.md`
+- architecture deep dive: `docs/architecture.md`
+- flow diagrams: `docs/how-it-works.md`
+- security and TLS: `docs/security-and-tls.md`
+- billing providers: `docs/billing-providers.md`
+- certificate lifecycle: `docs/certificate-lifecycle.md`
+- testing and CI: `docs/testing-and-ci.md`
+- live execution tracker: `plan.md`
 
 ---
 
-## Documentation Map
+## Open Source
 
-- Docs hub: `docs/README.md`
-- How it works (deep flow diagrams): `docs/how-it-works.md`
-- Architecture: `docs/architecture.md`
-- Billing: `docs/billing-providers.md`
-- Certificate lifecycle: `docs/certificate-lifecycle.md`
-- Testing/CI: `docs/testing-and-ci.md`
-- Live plan/progress: `plan.md`
+![Contribution Workflow](docs/assets/contribution-workflow.svg)
+
+Community and governance files:
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- `SECURITY.md`
+- `SUPPORT.md`
+- `GOVERNANCE.md`
+- `MAINTAINERS.md`
+- `CHANGELOG.md`
+- `.github/ISSUE_TEMPLATE/`
+- `.github/PULL_REQUEST_TEMPLATE.md`
+- `.github/dependabot.yml`
+
+---
+
+## Maintainer Links
+
+- Owner profile: `https://github.com/xgauravyaduvanshii`
+- Repository: `https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel`
 
 ---
 

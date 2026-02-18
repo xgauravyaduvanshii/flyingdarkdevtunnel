@@ -1,0 +1,46 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Platform pillars">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Platform Pillars</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">A tunneling platform that treats networking, security, and operations as one system.</text>
+
+  <rect x="72" y="132" width="360" height="260" rx="20" fill="#0EA5E9"/>
+  <text x="104" y="178" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Edge Runtime</text>
+  <text x="104" y="212" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="16">Go relay for HTTP/HTTPS/TCP ingress</text>
+  <text x="104" y="236" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="16">Latency-aware forwarding and backpressure</text>
+  <text x="104" y="260" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="16">Host mode policy and allowlist enforcement</text>
+
+  <rect x="470" y="132" width="360" height="260" rx="20" fill="#22C55E"/>
+  <text x="502" y="178" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Control Plane</text>
+  <text x="502" y="212" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="16">Fastify API for auth, tunnels, domains, plans</text>
+  <text x="502" y="236" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="16">Entitlement and policy issuance engine</text>
+  <text x="502" y="260" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="16">Admin visibility and audit lineage</text>
+
+  <rect x="868" y="132" width="360" height="260" rx="20" fill="#F97316"/>
+  <text x="900" y="178" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Developer UX</text>
+  <text x="900" y="212" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="16">CLI + config-driven named tunnels</text>
+  <text x="900" y="236" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="16">Request inspection and replay workflow</text>
+  <text x="900" y="260" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="16">Console with user and admin journeys</text>
+
+  <rect x="72" y="434" width="548" height="250" rx="20" fill="#6366F1"/>
+  <text x="104" y="480" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Business and Billing</text>
+  <text x="104" y="514" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Stripe, Razorpay, PayPal integration</text>
+  <text x="104" y="538" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Webhook verification and replay-safe workers</text>
+  <text x="104" y="562" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Dunning, reconciliation, and export tooling</text>
+
+  <rect x="654" y="434" width="574" height="250" rx="20" fill="#0F172A"/>
+  <text x="686" y="480" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Reliability and Trust</text>
+  <text x="686" y="514" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Cert lifecycle worker and incident state machine</text>
+  <text x="686" y="538" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Dashboards, alerting, and on-call runbooks</text>
+  <text x="686" y="562" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">Token rotation and abuse controls</text>
+
+  <line x1="252" y1="392" x2="252" y2="434" stroke="#334155" stroke-width="3"/>
+  <line x1="650" y1="392" x2="650" y2="434" stroke="#334155" stroke-width="3"/>
+  <line x1="1048" y1="392" x2="1048" y2="434" stroke="#334155" stroke-width="3"/>
+</svg>
