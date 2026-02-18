@@ -52,6 +52,7 @@ cd "$ROOT_DIR"
 pnpm --filter @fdt/api build >/dev/null
 pnpm --filter @fdt/worker-billing build >/dev/null
 pnpm --filter @fdt/worker-inspector build >/dev/null
+pnpm --filter @fdt/worker-certificates build >/dev/null
 
 
 echo "[integration] starting api"
@@ -81,6 +82,13 @@ PIDS+=("$!")
 (
   cd "$ROOT_DIR/services/worker-inspector"
   DATABASE_URL="$DATABASE_URL" node dist/index.js >"$LOG_DIR/worker-inspector.log" 2>&1
+) &
+PIDS+=("$!")
+
+(
+  cd "$ROOT_DIR/services/worker-certificates"
+  DATABASE_URL="$DATABASE_URL" CERT_WORKER_INTERVAL_SECONDS=15 TLS_PROBE_TIMEOUT_SECONDS=4 \
+    node dist/index.js >"$LOG_DIR/worker-certificates.log" 2>&1
 ) &
 PIDS+=("$!")
 
@@ -202,5 +210,22 @@ if [ "$HTTP_CODE_PASS" != "426" ]; then
   echo "expected 426 for passthrough host on HTTP endpoint, got $HTTP_CODE_PASS" >&2
   exit 1
 fi
+
+echo "[integration] verify admin domain visibility"
+ADMIN_DOMAINS_RESP="$(curl -sS "$API_BASE/v1/admin/domains" -H "authorization: Bearer $ACCESS_TOKEN")"
+printf '%s' "$ADMIN_DOMAINS_RESP" | CUSTOM_DOMAIN="$CUSTOM_DOMAIN" PASS_DOMAIN="$PASS_DOMAIN" node -e "
+const fs = require('fs');
+const body = JSON.parse(fs.readFileSync(0, 'utf8'));
+if (!Array.isArray(body.domains)) process.exit(2);
+const expected = [
+  { domain: process.env.CUSTOM_DOMAIN, mode: 'termination' },
+  { domain: process.env.PASS_DOMAIN, mode: 'passthrough' },
+];
+for (const item of expected) {
+  const row = body.domains.find((d) => d.domain === item.domain);
+  if (!row) process.exit(3);
+  if (row.tls_mode !== item.mode) process.exit(4);
+}
+"
 
 echo "[integration] smoke test passed"

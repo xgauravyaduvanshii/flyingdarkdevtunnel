@@ -126,6 +126,19 @@ services:
     depends_on:
       - postgres
 
+  worker-certificates:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/worker-certificates dev"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
+      CERT_WORKER_INTERVAL_SECONDS: 300
+      TLS_PROBE_TIMEOUT_SECONDS: 8
+    depends_on:
+      - postgres
+
   prometheus:
     image: prom/prometheus:latest
     container_name: fdt-prometheus

@@ -31,6 +31,33 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { tunnels: tunnels.rows };
   });
 
+  app.get("/domains", async () => {
+    const domains = await app.db.query(
+      `
+      SELECT
+        cd.id,
+        cd.domain,
+        cd.verified,
+        cd.tls_status,
+        cd.tls_mode,
+        cd.target_tunnel_id,
+        cd.certificate_ref,
+        cd.tls_last_checked_at,
+        cd.tls_not_after,
+        cd.tls_last_error,
+        cd.created_at,
+        cd.org_id,
+        t.name AS tunnel_name
+      FROM custom_domains cd
+      LEFT JOIN tunnels t ON t.id = cd.target_tunnel_id
+      ORDER BY cd.created_at DESC
+      LIMIT 1000
+    `,
+    );
+
+    return { domains: domains.rows };
+  });
+
   app.patch("/users/:id/plan", async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ planCode: z.enum(["free", "pro", "team"]) }).parse(request.body);

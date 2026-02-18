@@ -22,6 +22,7 @@
 ## Async Workers
 - `services/worker-billing`: Stripe subscription sync to entitlements.
 - `services/worker-inspector`: replay queue processing and retention cleanup.
+- `services/worker-certificates`: custom-domain TLS probe loop and certificate lifecycle status sync.
 
 ## Storage
 - PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements.

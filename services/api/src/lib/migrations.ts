@@ -140,6 +140,15 @@ const statements = [
   ALTER TABLE custom_domains ADD COLUMN IF NOT EXISTS certificate_ref TEXT;
   `,
   `
+  ALTER TABLE custom_domains ADD COLUMN IF NOT EXISTS tls_last_checked_at TIMESTAMPTZ;
+  `,
+  `
+  ALTER TABLE custom_domains ADD COLUMN IF NOT EXISTS tls_not_after TIMESTAMPTZ;
+  `,
+  `
+  ALTER TABLE custom_domains ADD COLUMN IF NOT EXISTS tls_last_error TEXT;
+  `,
+  `
   CREATE INDEX IF NOT EXISTS idx_custom_domains_target_tunnel_id ON custom_domains(target_tunnel_id);
   `,
   `

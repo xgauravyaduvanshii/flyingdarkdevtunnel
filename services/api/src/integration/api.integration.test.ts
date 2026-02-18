@@ -146,5 +146,19 @@ describe("api integration", () => {
     expect(claims.hosts.some((host) => host.endsWith(`.${process.env.BASE_DOMAIN}`))).toBe(true);
     expect(claims.tlsModes[domainName]).toBe("termination");
     expect(startBody.hosts).toContain(domainName);
+
+    const adminDomainsRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/domains",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminDomainsRes.statusCode).toBe(200);
+    const adminDomainsBody = adminDomainsRes.json() as {
+      domains: Array<{ domain: string; tls_status: string; tls_mode: string }>;
+    };
+    const adminDomain = adminDomainsBody.domains.find((item) => item.domain === domainName);
+    expect(adminDomain).toBeTruthy();
+    expect(adminDomain?.tls_mode).toBe("termination");
+    expect(adminDomain?.tls_status).toBe("pending_issue");
   }, 30_000);
 });

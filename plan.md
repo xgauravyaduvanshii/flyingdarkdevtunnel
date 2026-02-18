@@ -11,7 +11,7 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Fastify control-plane API with auth, tunnels, requests/replay, domains, billing, admin.
 - Go relay + Go CLI agent with working end-to-end HTTP tunneling and TCP stream forwarding.
 - Next.js console + admin UI with tunnel/domain/billing/inspection views.
-- Billing worker + inspector worker.
+- Billing worker + inspector worker + certificate lifecycle worker.
 - Docker Compose local stack + Cloudflare helper + monitoring basics.
 - Lint/typecheck/build/test pipelines.
 - Initial CI workflow.
@@ -34,16 +34,23 @@ Phase 1 (MVP hardening + production readiness improvements)
   - API integration test coverage for paid-domain routing and enriched token claims.
   - End-to-end smoke script (API + relay + agent + workers + postgres + redis).
   - GitHub Actions integration job with ephemeral Postgres/Redis service containers.
+- Certificate lifecycle visibility:
+  - Added `worker-certificates` to probe custom-domain TLS and sync `tls_status`.
+  - Added `tls_last_checked_at`, `tls_not_after`, `tls_last_error` schema tracking.
+  - Added admin domain inventory API (`GET /v1/admin/domains`) and admin UI page.
+  - Added console-domain expiry/error visibility.
+  - Added smoke validation for admin domain visibility and TLS mode mapping.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
-  - Need certificate status sync back to control-plane (`pending_issue` -> `issued` / renew failure handling).
+  - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
+  - Add cert-expiry alerting and on-call runbooks.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Track issuance/renewal status in `custom_domains`.
-   - Surface TLS health/errors in API + console.
+   - Integrate real issuance/renewal events from cert manager.
+   - Add retry/backoff semantics and domain-level failure policy.
 2. Multi-region edge foundations:
    - Region-aware relay registration and host assignment.
 3. Enterprise controls:

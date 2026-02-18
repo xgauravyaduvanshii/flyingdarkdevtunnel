@@ -6,7 +6,7 @@ Implemented stack:
 - Control plane API: Fastify + PostgreSQL + JWT + Stripe webhook support
 - Data plane: Go relay + Go agent CLI with HTTP tunnel forwarding and TCP stream multiplexing
 - Product UI: Next.js user/admin console + docs site
-- Workers: billing sync + inspection retention/replay queue processor
+- Workers: billing sync + inspection retention/replay queue processor + certificate lifecycle sync
 - Infra: Docker Compose (Postgres/Redis/MinIO/services), Cloudflare DNS script, Prometheus config
 
 ## Monorepo layout
@@ -16,6 +16,7 @@ Implemented stack:
 - `services/api`: control plane API (`/v1/auth`, `/v1/tunnels`, `/v1/requests`, `/v1/domains`, `/v1/billing`, `/v1/admin`, `/v1/agent`)
 - `services/worker-billing`: Stripe subscription -> entitlement sync loop
 - `services/worker-inspector`: replay queue + retention cleanup loop
+- `services/worker-certificates`: custom-domain TLS probe and lifecycle status sync loop
 - `go/relay`: edge relay (public HTTP + control websocket + TCP listeners)
 - `go/agent`: CLI (`login`, `http`, `tcp`, `start`, `tunnels ls`, `inspect`)
 - `go/proto`: shared control/data frame types

@@ -11,6 +11,10 @@ type DomainRow = {
   tls_mode: "termination" | "passthrough";
   target_tunnel_id: string | null;
   tls_status: string;
+  certificate_ref: string | null;
+  tls_last_checked_at: string | null;
+  tls_not_after: string | null;
+  tls_last_error: string | null;
 };
 
 type TunnelRow = {
@@ -118,6 +122,7 @@ export default function DomainsPage() {
               <th>Domain</th>
               <th>TLS mode</th>
               <th>Status</th>
+              <th>Expiry</th>
               <th>Token</th>
               <th>Tunnel</th>
               <th>Actions</th>
@@ -129,6 +134,7 @@ export default function DomainsPage() {
                 <td>{row.domain}</td>
                 <td>{row.tls_mode}</td>
                 <td>{row.verified ? `verified (${row.tls_status})` : "pending"}</td>
+                <td>{row.tls_not_after ? new Date(row.tls_not_after).toLocaleDateString() : "-"}</td>
                 <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{row.verification_token}</td>
                 <td>
                   <select
@@ -148,6 +154,11 @@ export default function DomainsPage() {
                   <button style={{ marginLeft: 8 }} onClick={() => void routeDomain(row.id)}>Route</button>
                   <button style={{ marginLeft: 8 }} onClick={() => void unrouteDomain(row.id)}>Unroute</button>
                   <button style={{ marginLeft: 8 }} onClick={() => void remove(row.id)}>Delete</button>
+                  {row.tls_last_error && (
+                    <p className="muted" style={{ marginTop: 8, maxWidth: 260, whiteSpace: "normal" }}>
+                      TLS error: {row.tls_last_error}
+                    </p>
+                  )}
                 </td>
               </tr>
             ))}
