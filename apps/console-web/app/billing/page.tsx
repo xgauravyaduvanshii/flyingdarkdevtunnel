@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, getToken } from "@/lib/api";
 
 type Plan = {
   id: string;
@@ -36,11 +36,40 @@ type FinanceEvent = {
   error: string | null;
 };
 
+type InvoiceRow = {
+  id: string;
+  provider: BillingProvider;
+  provider_invoice_id: string | null;
+  status: string;
+  currency: string | null;
+  subtotal_cents: string | null;
+  tax_cents: string | null;
+  total_cents: string | null;
+  amount_paid_cents: string | null;
+  invoice_url: string | null;
+  due_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
+type TaxRecordRow = {
+  id: string;
+  invoice_id: string;
+  tax_type: string;
+  jurisdiction: string | null;
+  amount_cents: string;
+  currency: string | null;
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+
 export default function BillingPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [provider, setProvider] = useState<BillingProvider>("stripe");
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [events, setEvents] = useState<FinanceEvent[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [taxRecords, setTaxRecords] = useState<TaxRecordRow[]>([]);
   const [paymentId, setPaymentId] = useState("");
   const [amountCents, setAmountCents] = useState("");
   const [reason, setReason] = useState("");
@@ -49,14 +78,17 @@ export default function BillingPage() {
 
   async function load() {
     try {
-      const [plansData, subscriptionData, eventsData] = await Promise.all([
+      const [plansData, subscriptionData, eventsData, invoicesData] = await Promise.all([
         api<{ plans: Plan[] }>("/v1/plans"),
         api<{ subscription: SubscriptionInfo }>("/v1/billing/subscription"),
         api<{ events: FinanceEvent[] }>("/v1/billing/finance-events?limit=20"),
+        api<{ invoices: InvoiceRow[]; taxRecords: TaxRecordRow[] }>("/v1/billing/invoices?limit=20&includeTax=true"),
       ]);
       setPlans(plansData.plans);
       setSubscription(subscriptionData.subscription);
       setEvents(eventsData.events);
+      setInvoices(invoicesData.invoices);
+      setTaxRecords(invoicesData.taxRecords);
       setMessage("");
     } catch (error) {
       setMessage(`Failed loading billing data: ${String(error)}`);
@@ -135,6 +167,33 @@ export default function BillingPage() {
     }
   }
 
+  async function exportInvoicesCsv() {
+    setBusy(true);
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_BASE}/v1/billing/invoices/export?limit=5000`, {
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "billing-invoices.csv";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+      setMessage("Exported invoices CSV");
+    } catch (error) {
+      setMessage(`Export failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="grid cols-3">
       <section className="card" style={{ gridColumn: "1 / -1" }}>
@@ -199,6 +258,46 @@ export default function BillingPage() {
             Issue refund
           </button>
         </form>
+      </section>
+
+      <section className="card" style={{ gridColumn: "1 / -1" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <h3 style={{ marginBottom: 0 }}>Recent invoices</h3>
+          <button className="button secondary" disabled={busy} onClick={() => void exportInvoicesCsv()}>
+            Export invoices CSV
+          </button>
+        </div>
+        <table className="table" style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>Total</th>
+              <th>Tax</th>
+              <th>Paid</th>
+              <th>Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((invoice) => (
+              <tr key={invoice.id}>
+                <td>{new Date(invoice.created_at).toLocaleString()}</td>
+                <td>{invoice.provider}</td>
+                <td>{invoice.status}</td>
+                <td>{invoice.total_cents ? `${invoice.total_cents} ${invoice.currency ?? "USD"}` : "-"}</td>
+                <td>{invoice.tax_cents ? `${invoice.tax_cents} ${invoice.currency ?? "USD"}` : "-"}</td>
+                <td>{invoice.amount_paid_cents ? `${invoice.amount_paid_cents} ${invoice.currency ?? "USD"}` : "-"}</td>
+                <td style={{ maxWidth: 240, whiteSpace: "normal", wordBreak: "break-all" }}>
+                  {invoice.provider_invoice_id ?? "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Tax records: {taxRecords.length}
+        </p>
       </section>
 
       <section className="card" style={{ gridColumn: "1 / -1" }}>

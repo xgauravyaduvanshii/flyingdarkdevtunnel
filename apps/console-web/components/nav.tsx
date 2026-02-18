@@ -13,6 +13,7 @@ const links = [
   ["/admin/domains", "Domains Admin"],
   ["/admin/billing-webhooks", "Billing Ops"],
   ["/admin/billing-finance-events", "Finance Ops"],
+  ["/admin/billing-invoices", "Invoices Ops"],
 ] as const;
 
 export function TopNav() {
