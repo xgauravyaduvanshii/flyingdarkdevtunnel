@@ -1,0 +1,80 @@
+<svg width="1300" height="640" viewBox="0 0 1300 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Billing reconciliation flow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="stepA" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="stepB" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#15803D"/>
+    </linearGradient>
+    <linearGradient id="stepC" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+    <linearGradient id="stepD" x1="0" y1="0" x2="250" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1E293B"/>
+    </marker>
+  </defs>
+
+  <rect width="1300" height="640" fill="url(#bg)"/>
+  <text x="40" y="56" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Billing and Finance Reconciliation Flow</text>
+
+  <rect x="64" y="116" width="250" height="94" rx="14" fill="url(#stepA)"/>
+  <text x="90" y="156" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Checkout</text>
+  <text x="90" y="179" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Stripe / Razorpay / PayPal</text>
+
+  <rect x="368" y="116" width="250" height="94" rx="14" fill="url(#stepB)"/>
+  <text x="394" y="156" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Webhook Ingest</text>
+  <text x="394" y="179" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">signature + freshness + idempotency</text>
+
+  <rect x="672" y="116" width="250" height="94" rx="14" fill="url(#stepC)"/>
+  <text x="698" y="156" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Apply State</text>
+  <text x="698" y="179" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">subscription / entitlement updates</text>
+
+  <rect x="976" y="116" width="250" height="94" rx="14" fill="url(#stepD)"/>
+  <text x="1002" y="156" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Finance Ledger</text>
+  <text x="1002" y="179" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">billing_finance_events</text>
+
+  <line x1="314" y1="163" x2="358" y2="163" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="618" y1="163" x2="662" y2="163" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="922" y1="163" x2="966" y2="163" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="104" y="292" width="258" height="94" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="134" y="334" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Dunning Cases</text>
+  <text x="134" y="357" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">retry stage + notifications</text>
+
+  <rect x="406" y="292" width="258" height="94" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="436" y="334" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Report Exports</text>
+  <text x="436" y="357" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">delivery + ACK lifecycle</text>
+
+  <rect x="708" y="292" width="258" height="94" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="738" y="334" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Settlement Ingest</text>
+  <text x="738" y="357" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">signed batch receipts</text>
+
+  <rect x="1010" y="292" width="258" height="94" rx="14" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="1040" y="334" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Reconcile</text>
+  <text x="1040" y="357" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">matched / delta / failed</text>
+
+  <line x1="1124" y1="210" x2="1124" y2="282" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="1124" y1="240" x2="243" y2="282" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1124" y1="240" x2="545" y2="282" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1124" y1="240" x2="847" y2="282" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="240" y="468" width="820" height="112" rx="16" fill="#ECFEFF" stroke="#67E8F9" stroke-width="2"/>
+  <text x="274" y="514" fill="#155E75" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Operations and Recovery</text>
+  <text x="274" y="541" fill="#0F766E" font-family="Segoe UI, Arial, sans-serif" font-size="15">admin replay/reconcile APIs, alerting, dashboards, and runbook-triggered automation</text>
+
+  <line x1="233" y1="386" x2="340" y2="458" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="535" y1="386" x2="540" y2="458" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="837" y1="386" x2="740" y2="458" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1139" y1="386" x2="940" y2="458" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)"/>
+</svg>

@@ -75,6 +75,12 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 
 - `docs/assets/platform-banner.svg`
 - `docs/assets/tunnel-flow.svg`
+- `docs/assets/architecture-topology.svg`
+- `docs/assets/control-plane-lifecycle.svg`
+- `docs/assets/tunnel-sequence.svg`
+- `docs/assets/edge-policy-flow.svg`
+- `docs/assets/certificate-lifecycle-flow.svg`
+- `docs/assets/billing-reconciliation-flow.svg`
 
 ---
 
