@@ -37,18 +37,19 @@ import (
 )
 
 type claims struct {
-	UserID            string            `json:"userId"`
-	OrgID             string            `json:"orgId"`
-	TunnelID          string            `json:"tunnelId"`
-	Protocol          string            `json:"protocol"`
-	Subdomain         string            `json:"subdomain"`
-	Region            string            `json:"region"`
-	Hosts             []string          `json:"hosts"`
-	TLSModes          map[string]string `json:"tlsModes"`
-	BasicAuthUser     string            `json:"basicAuthUser"`
-	BasicAuthPassword string            `json:"basicAuthPassword"`
-	IPAllowlist       []string          `json:"ipAllowlist"`
-	TokenType         string            `json:"tokenType"`
+	UserID             string            `json:"userId"`
+	OrgID              string            `json:"orgId"`
+	TunnelID           string            `json:"tunnelId"`
+	Protocol           string            `json:"protocol"`
+	Subdomain          string            `json:"subdomain"`
+	Region             string            `json:"region"`
+	Hosts              []string          `json:"hosts"`
+	TLSModes           map[string]string `json:"tlsModes"`
+	BasicAuthUser      string            `json:"basicAuthUser"`
+	BasicAuthPassword  string            `json:"basicAuthPassword"`
+	IPAllowlist        []string          `json:"ipAllowlist"`
+	MaxConcurrentConns int               `json:"maxConcurrentConns"`
+	TokenType          string            `json:"tokenType"`
 	jwt.RegisteredClaims
 }
 
@@ -63,18 +64,19 @@ type tcpStream struct {
 }
 
 type session struct {
-	Conn              *websocket.Conn
-	WriteMu           sync.Mutex
-	TunnelID          string
-	Protocol          string
-	Subdomain         string
-	Region            string
-	PublicTCPPort     int
-	PublicHosts       []string
-	TLSModes          map[string]string
-	BasicAuthUser     string
-	BasicAuthPassword string
-	IPAllowlist       []string
+	Conn               *websocket.Conn
+	WriteMu            sync.Mutex
+	TunnelID           string
+	Protocol           string
+	Subdomain          string
+	Region             string
+	PublicTCPPort      int
+	PublicHosts        []string
+	TLSModes           map[string]string
+	BasicAuthUser      string
+	BasicAuthPassword  string
+	IPAllowlist        []string
+	MaxConcurrentConns int
 
 	PendingMu   sync.Mutex
 	PendingHTTP map[string]chan pendingHTTPResponse
@@ -82,24 +84,25 @@ type session struct {
 }
 
 type relayState struct {
-	BaseDomain         string
-	Region             string
-	EdgePool           map[string][]string
-	AgentSecret        string
-	HTTPPort           int
-	HTTPSPort          int
-	ControlPort        int
-	TLSPassthroughPort int
-	TCPStartPort       int
-	TCPEndPort         int
-	TLSEnabled         bool
-	AutoCertEnabled    bool
-	AutoCertCacheDir   string
-	AutoCertEmail      string
-	AutoCertAllowAny   bool
-	StaticCertFile     string
-	StaticKeyFile      string
-	AllowedTLSHosts    map[string]struct{}
+	BaseDomain                string
+	Region                    string
+	EdgePool                  map[string][]string
+	AgentSecret               string
+	HTTPPort                  int
+	HTTPSPort                 int
+	ControlPort               int
+	TLSPassthroughPort        int
+	TCPStartPort              int
+	TCPEndPort                int
+	TLSEnabled                bool
+	AutoCertEnabled           bool
+	AutoCertCacheDir          string
+	AutoCertEmail             string
+	AutoCertAllowAny          bool
+	StaticCertFile            string
+	StaticKeyFile             string
+	AllowedTLSHosts           map[string]struct{}
+	DefaultMaxConcurrentConns int
 
 	Mu        sync.RWMutex
 	ByTunnel  map[string]*session
@@ -118,28 +121,29 @@ func newRelayState() *relayState {
 	}
 
 	state := &relayState{
-		BaseDomain:         getEnv("RELAY_BASE_DOMAIN", "tunnel.yourdomain.com"),
-		Region:             strings.ToLower(strings.TrimSpace(getEnv("RELAY_REGION", "us"))),
-		EdgePool:           parseEdgePool(getEnv("RELAY_EDGE_POOL", "us=us-edge-1|us-edge-2|us-edge-3")),
-		AgentSecret:        getEnv("RELAY_AGENT_JWT_SECRET", "replace_with_at_least_32_characters_here"),
-		HTTPPort:           getEnvInt("RELAY_HTTP_PORT", 8080),
-		HTTPSPort:          getEnvInt("RELAY_HTTPS_PORT", 8443),
-		ControlPort:        getEnvInt("RELAY_CONTROL_PORT", 8081),
-		TLSPassthroughPort: getEnvInt("RELAY_TLS_PASSTHROUGH_PORT", 9443),
-		TCPStartPort:       getEnvInt("RELAY_TCP_START_PORT", 7000),
-		TCPEndPort:         getEnvInt("RELAY_TCP_END_PORT", 7099),
-		TLSEnabled:         getEnvBool("RELAY_TLS_ENABLE", true),
-		AutoCertEnabled:    getEnvBool("RELAY_AUTOCERT_ENABLE", false),
-		AutoCertCacheDir:   getEnv("RELAY_AUTOCERT_CACHE_DIR", filepath.Join(".data", "autocert")),
-		AutoCertEmail:      getEnv("RELAY_AUTOCERT_EMAIL", ""),
-		AutoCertAllowAny:   getEnvBool("RELAY_AUTOCERT_ALLOW_ANY", false),
-		StaticCertFile:     getEnv("RELAY_TLS_CERT_FILE", ""),
-		StaticKeyFile:      getEnv("RELAY_TLS_KEY_FILE", ""),
-		AllowedTLSHosts:    allowedHosts,
-		ByTunnel:           map[string]*session{},
-		ByHost:             map[string]*session{},
-		HostModes:          map[string]string{},
-		ByTCPPort:          map[int]*session{},
+		BaseDomain:                getEnv("RELAY_BASE_DOMAIN", "tunnel.yourdomain.com"),
+		Region:                    strings.ToLower(strings.TrimSpace(getEnv("RELAY_REGION", "us"))),
+		EdgePool:                  parseEdgePool(getEnv("RELAY_EDGE_POOL", "us=us-edge-1|us-edge-2|us-edge-3")),
+		AgentSecret:               getEnv("RELAY_AGENT_JWT_SECRET", "replace_with_at_least_32_characters_here"),
+		HTTPPort:                  getEnvInt("RELAY_HTTP_PORT", 8080),
+		HTTPSPort:                 getEnvInt("RELAY_HTTPS_PORT", 8443),
+		ControlPort:               getEnvInt("RELAY_CONTROL_PORT", 8081),
+		TLSPassthroughPort:        getEnvInt("RELAY_TLS_PASSTHROUGH_PORT", 9443),
+		TCPStartPort:              getEnvInt("RELAY_TCP_START_PORT", 7000),
+		TCPEndPort:                getEnvInt("RELAY_TCP_END_PORT", 7099),
+		TLSEnabled:                getEnvBool("RELAY_TLS_ENABLE", true),
+		AutoCertEnabled:           getEnvBool("RELAY_AUTOCERT_ENABLE", false),
+		AutoCertCacheDir:          getEnv("RELAY_AUTOCERT_CACHE_DIR", filepath.Join(".data", "autocert")),
+		AutoCertEmail:             getEnv("RELAY_AUTOCERT_EMAIL", ""),
+		AutoCertAllowAny:          getEnvBool("RELAY_AUTOCERT_ALLOW_ANY", false),
+		StaticCertFile:            getEnv("RELAY_TLS_CERT_FILE", ""),
+		StaticKeyFile:             getEnv("RELAY_TLS_KEY_FILE", ""),
+		AllowedTLSHosts:           allowedHosts,
+		DefaultMaxConcurrentConns: getEnvInt("RELAY_DEFAULT_MAX_CONCURRENT_CONNS", 100),
+		ByTunnel:                  map[string]*session{},
+		ByHost:                    map[string]*session{},
+		HostModes:                 map[string]string{},
+		ByTCPPort:                 map[int]*session{},
 	}
 
 	if state.Region == "" {
@@ -220,19 +224,25 @@ func startControlServer(state *relayState) error {
 			return
 		}
 
+		maxConcurrent := parsedClaims.MaxConcurrentConns
+		if maxConcurrent <= 0 {
+			maxConcurrent = state.DefaultMaxConcurrentConns
+		}
+
 		s := &session{
-			Conn:              conn,
-			TunnelID:          parsedClaims.TunnelID,
-			Protocol:          parsedClaims.Protocol,
-			Subdomain:         parsedClaims.Subdomain,
-			Region:            strings.ToLower(strings.TrimSpace(parsedClaims.Region)),
-			PublicHosts:       uniqueHosts(parsedClaims.Hosts),
-			TLSModes:          parsedClaims.TLSModes,
-			BasicAuthUser:     parsedClaims.BasicAuthUser,
-			BasicAuthPassword: parsedClaims.BasicAuthPassword,
-			IPAllowlist:       parsedClaims.IPAllowlist,
-			PendingHTTP:       map[string]chan pendingHTTPResponse{},
-			TCPStreams:        map[string]*tcpStream{},
+			Conn:               conn,
+			TunnelID:           parsedClaims.TunnelID,
+			Protocol:           parsedClaims.Protocol,
+			Subdomain:          parsedClaims.Subdomain,
+			Region:             strings.ToLower(strings.TrimSpace(parsedClaims.Region)),
+			PublicHosts:        uniqueHosts(parsedClaims.Hosts),
+			TLSModes:           parsedClaims.TLSModes,
+			BasicAuthUser:      parsedClaims.BasicAuthUser,
+			BasicAuthPassword:  parsedClaims.BasicAuthPassword,
+			IPAllowlist:        parsedClaims.IPAllowlist,
+			MaxConcurrentConns: maxConcurrent,
+			PendingHTTP:        map[string]chan pendingHTTPResponse{},
+			TCPStreams:         map[string]*tcpStream{},
 		}
 		if s.TLSModes == nil {
 			s.TLSModes = map[string]string{}
@@ -301,6 +311,12 @@ func buildPublicHTTPHandler(state *relayState) http.Handler {
 		respCh := make(chan pendingHTTPResponse, 1)
 
 		s.PendingMu.Lock()
+		if s.MaxConcurrentConns > 0 && len(s.PendingHTTP) >= s.MaxConcurrentConns {
+			s.PendingMu.Unlock()
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "tunnel concurrency limit reached", http.StatusTooManyRequests)
+			return
+		}
 		s.PendingHTTP[requestID] = respCh
 		s.PendingMu.Unlock()
 
@@ -701,6 +717,12 @@ func acceptTCPConnections(s *session, listener net.Listener) {
 func attachTCPConnectionToSession(s *session, conn net.Conn) {
 	streamID := uuid.NewString()
 	s.PendingMu.Lock()
+	if s.MaxConcurrentConns > 0 && len(s.TCPStreams) >= s.MaxConcurrentConns {
+		s.PendingMu.Unlock()
+		_ = conn.Close()
+		log.Printf("tcp stream rejected tunnel=%s reason=concurrency_limit limit=%d", s.TunnelID, s.MaxConcurrentConns)
+		return
+	}
 	s.TCPStreams[streamID] = &tcpStream{Conn: conn}
 	s.PendingMu.Unlock()
 

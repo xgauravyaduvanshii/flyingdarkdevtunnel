@@ -79,6 +79,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       tlsModes[route.domain] = route.tls_mode;
     }
 
+    const entitlements = await getEntitlements(app, tunnel.org_id);
+
     const token = await app.auth.signAgentToken({
       userId: tunnel.user_id,
       orgId: tunnel.org_id,
@@ -91,7 +93,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       basicAuthPassword: tunnel.basic_auth_password,
       ipAllowlist: tunnel.ip_allowlist ?? [],
       region: tunnel.region ?? "us",
-      maxConcurrentConns: (await getEntitlements(app, tunnel.org_id)).max_concurrent_conns,
+      maxConcurrentConns: entitlements.max_concurrent_conns,
     });
 
     await app.audit.log({
@@ -119,6 +121,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           basicAuthPassword: tunnel.basic_auth_password,
           ipAllowlist: tunnel.ip_allowlist,
         },
+        maxConcurrentConns: entitlements.max_concurrent_conns,
       },
     };
   });
