@@ -1,0 +1,57 @@
+<svg width="1300" height="700" viewBox="0 0 1300 700" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Certificate incident timeline">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="700" fill="url(#bg)"/>
+
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Certificate Incident Timeline</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">How certificate failures move from detection to remediation and verified recovery.</text>
+
+  <line x1="140" y1="220" x2="1160" y2="220" stroke="#334155" stroke-width="6" stroke-linecap="round"/>
+
+  <circle cx="180" cy="220" r="28" fill="#0EA5E9"/>
+  <text x="162" y="228" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">1</text>
+  <rect x="120" y="268" width="220" height="118" rx="14" fill="#E0F2FE"/>
+  <text x="140" y="304" fill="#075985" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Detect</text>
+  <text x="140" y="332" fill="#0C4A6E" font-family="Segoe UI, Arial, sans-serif" font-size="14">Expiry pressure</text>
+  <text x="140" y="352" fill="#0C4A6E" font-family="Segoe UI, Arial, sans-serif" font-size="14">Issuer callback error</text>
+
+  <circle cx="420" cy="220" r="28" fill="#22C55E"/>
+  <text x="402" y="228" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">2</text>
+  <rect x="360" y="268" width="220" height="118" rx="14" fill="#DCFCE7"/>
+  <text x="380" y="304" fill="#14532D" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Classify</text>
+  <text x="380" y="332" fill="#14532D" font-family="Segoe UI, Arial, sans-serif" font-size="14">Source validity check</text>
+  <text x="380" y="352" fill="#14532D" font-family="Segoe UI, Arial, sans-serif" font-size="14">Failure policy mapping</text>
+
+  <circle cx="660" cy="220" r="28" fill="#F97316"/>
+  <text x="642" y="228" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">3</text>
+  <rect x="600" y="268" width="220" height="118" rx="14" fill="#FFEDD5"/>
+  <text x="620" y="304" fill="#7C2D12" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Mitigate</text>
+  <text x="620" y="332" fill="#7C2D12" font-family="Segoe UI, Arial, sans-serif" font-size="14">Retry/backoff</text>
+  <text x="620" y="352" fill="#7C2D12" font-family="Segoe UI, Arial, sans-serif" font-size="14">Escalation + runbook</text>
+
+  <circle cx="900" cy="220" r="28" fill="#6366F1"/>
+  <text x="882" y="228" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">4</text>
+  <rect x="840" y="268" width="220" height="118" rx="14" fill="#E0E7FF"/>
+  <text x="860" y="304" fill="#312E81" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Recover</text>
+  <text x="860" y="332" fill="#312E81" font-family="Segoe UI, Arial, sans-serif" font-size="14">Re-issuance success</text>
+  <text x="860" y="352" fill="#312E81" font-family="Segoe UI, Arial, sans-serif" font-size="14">Replication verified</text>
+
+  <circle cx="1140" cy="220" r="28" fill="#A855F7"/>
+  <text x="1122" y="228" fill="#FAF5FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">5</text>
+  <rect x="1030" y="268" width="220" height="118" rx="14" fill="#F3E8FF"/>
+  <text x="1050" y="304" fill="#581C87" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Verify</text>
+  <text x="1050" y="332" fill="#581C87" font-family="Segoe UI, Arial, sans-serif" font-size="14">Audit-chain update</text>
+  <text x="1050" y="352" fill="#581C87" font-family="Segoe UI, Arial, sans-serif" font-size="14">Postmortem signal</text>
+
+  <rect x="80" y="432" width="1140" height="198" rx="16" fill="#0F172A"/>
+  <text x="114" y="474" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Response Guarantees</text>
+  <text x="114" y="512" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Every incident has deterministic status transitions: open -> acknowledged -> resolved.</text>
+  <text x="114" y="540" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Retry attempts and operator actions are persisted and queryable.</text>
+  <text x="114" y="568" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Alert routing is tied to certificate expiry SLO and issuance failure rate.</text>
+  <text x="114" y="596" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Recovery is only complete when edge replication and handshake probes both pass.</text>
+</svg>

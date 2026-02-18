@@ -7,13 +7,18 @@
 Open-source, full-stack tunneling platform inspired by ngrok.
 
 <p>
-  <a href="https://github.com"><img alt="Open Source" src="https://img.shields.io/badge/Open%20Source-Yes-22c55e?logo=opensourceinitiative&logoColor=white"></a>
+  <a href="https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel"><img alt="Open Source" src="https://img.shields.io/badge/Open%20Source-Yes-22c55e?logo=opensourceinitiative&logoColor=white"></a>
   <img alt="License" src="https://img.shields.io/badge/License-AGPL--3.0-0ea5e9?logo=gnu&logoColor=white">
   <img alt="Data Plane" src="https://img.shields.io/badge/Data%20Plane-Go-16a34a?logo=go&logoColor=white">
   <img alt="Control Plane" src="https://img.shields.io/badge/Control%20Plane-Fastify%20%2B%20PostgreSQL-f97316?logo=fastify&logoColor=white">
   <img alt="Frontend" src="https://img.shields.io/badge/Frontend-Next.js-111827?logo=nextdotjs&logoColor=white">
   <img alt="Monorepo" src="https://img.shields.io/badge/Monorepo-pnpm%20%2B%20Turbo-6366f1?logo=pnpm&logoColor=white">
   <img alt="Payments" src="https://img.shields.io/badge/Payments-Stripe%20%7C%20Razorpay%20%7C%20PayPal-eab308?logo=stripe&logoColor=white">
+</p>
+<p>
+  <a href="https://github.com/xgauravyaduvanshii">Owner: xgauravyaduvanshii</a>
+  ·
+  <a href="https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel">Repository Home</a>
 </p>
 
 </div>
@@ -23,6 +28,13 @@ Open-source, full-stack tunneling platform inspired by ngrok.
 ## What This Project Does
 
 FlyingDarkDevTunnel lets you expose local services to the Internet using secure, policy-aware tunnels.
+
+This repository is not only a tunnel utility, it is an end-to-end platform blueprint:
+- a high-performance relay and agent data path,
+- a SaaS-ready control plane,
+- enterprise-minded security controls,
+- billing and reconciliation operations,
+- and production-style runbook and observability foundations.
 
 It is designed for:
 - webhook testing and callback development,
@@ -67,29 +79,14 @@ It is designed for:
 
 ## Monorepo Structure
 
-```txt
-flyingdarkdevtunnel/
-  apps/
-    console-web/                 # user + admin web console
-    docs-site/                   # docs frontend
-  services/
-    api/                         # control plane API
-    worker-billing/              # billing sync/dunning/report pipeline
-    worker-inspector/            # request inspection/replay retention
-    worker-certificates/         # cert lifecycle + replication state
-  go/
-    relay/                       # edge relay ingress
-    agent/                       # CLI/local tunnel client
-    proto/                       # shared protocol contracts
-  packages/
-    ui/ config/ sdk/ eslint-config/ tsconfig/
-  infra/
-    docker/ cloudflare/ monitoring/ migrations/
-  docs/
-    runbooks/ assets/            # implementation + operations docs
-  scripts/
-    integration-smoke.sh relay-resilience.sh chaos-drill.sh
-```
+![Monorepo Map](docs/assets/monorepo-map.svg)
+
+Key structure principles:
+- `apps/` is where user/operator experience lives.
+- `services/` is where control-plane orchestration and async domains run.
+- `go/` is where low-latency traffic handling and protocol behavior live.
+- `packages/` keeps shared contracts and build policies consistent.
+- `infra/` and `docs/` encode deployability and operational clarity as first-class artifacts.
 
 ---
 
@@ -171,6 +168,19 @@ This platform is intentionally split into clear responsibility layers:
 5. **Ops-first hardening model**  
    Metrics, alerting, runbooks, replay/reconcile tooling, and chaos workflows are treated as core product features.
 
+### Implementation depth focus
+
+The codebase is structured around failure domains:
+- ingress/runtime failures (relay/agent),
+- control and state drift failures (API/db/redis),
+- asynchronous consistency failures (workers),
+- human operations failures (runbooks, dashboards, audits).
+
+This approach allows faster incident containment because each failure type has:
+- explicit data ownership,
+- a replay/reconcile path,
+- and observable metrics mapped to runbook actions.
+
 ---
 
 ## Security Model
@@ -184,6 +194,9 @@ Security-critical behaviors included today:
 - audit-chain integrity controls for admin events,
 - anomaly event capture and adaptive abuse controls,
 - replay/reconcile tooling for billing/cert failure recovery.
+
+![Security Defense Layers](docs/assets/security-defense-layers.svg)
+![Certificate Incident Timeline](docs/assets/cert-incident-timeline.svg)
 
 See:
 - `docs/security-and-tls.md`
@@ -201,6 +214,25 @@ See:
   - `scripts/chaos-drill.sh`
 - Integration smoke:
   - `scripts/integration-smoke.sh`
+
+![Release and Operations Loop](docs/assets/release-ops-loop.svg)
+
+---
+
+## Payment Operations Depth
+
+Payments are handled as a deterministic convergence loop rather than a best-effort webhook callback:
+- provider event signatures and idempotency checks protect ingest correctness,
+- subscription and entitlement deltas are applied through a replay-safe worker pipeline,
+- failed payments flow into dunning + notification orchestration,
+- finance exports and settlement verification close the accounting loop.
+
+![Payment Orchestration Layers](docs/assets/payment-orchestration-layers.svg)
+
+See:
+- `docs/billing-providers.md`
+- `docs/runbooks/billing-webhook-slo.md`
+- `services/worker-billing/`
 
 ---
 
@@ -241,6 +273,12 @@ This repository is now configured as an open-source project with full community 
 - Issue templates: `.github/ISSUE_TEMPLATE/`
 - PR template: `.github/PULL_REQUEST_TEMPLATE.md`
 - Dependabot config: `.github/dependabot.yml`
+
+![Contribution Workflow](docs/assets/contribution-workflow.svg)
+
+The project is now explicitly aligned to your GitHub identity:
+- profile: `https://github.com/xgauravyaduvanshii`
+- repo namespace used in metadata and template links.
 
 ---
 

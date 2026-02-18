@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flyingdarkdevtunnel/fdt/proto"
+	"github.com/xgauravyaduvanshii/flyingdarkdevtunnel/go/proto"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"

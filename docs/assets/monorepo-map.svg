@@ -1,0 +1,65 @@
+<svg width="1400" height="760" viewBox="0 0 1400 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Monorepo map">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1400" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="cardA" x1="0" y1="0" x2="390" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="cardB" x1="0" y1="0" x2="390" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#15803D"/>
+    </linearGradient>
+    <linearGradient id="cardC" x1="0" y1="0" x2="390" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+    <linearGradient id="cardD" x1="0" y1="0" x2="390" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1400" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Monorepo Service Map</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">How code is organized across apps, services, data plane, and platform packages.</text>
+
+  <rect x="56" y="136" width="410" height="262" rx="20" fill="url(#cardA)"/>
+  <text x="86" y="184" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">apps/</text>
+  <text x="86" y="214" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="17">console-web</text>
+  <text x="86" y="239" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="17">docs-site</text>
+  <text x="86" y="272" fill="#BAE6FD" font-family="Segoe UI, Arial, sans-serif" font-size="14">Frontend UX for users and admins</text>
+
+  <rect x="496" y="136" width="410" height="262" rx="20" fill="url(#cardB)"/>
+  <text x="526" y="184" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">services/</text>
+  <text x="526" y="214" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="17">api</text>
+  <text x="526" y="239" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="17">worker-billing, worker-inspector</text>
+  <text x="526" y="264" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="17">worker-certificates</text>
+  <text x="526" y="297" fill="#BBF7D0" font-family="Segoe UI, Arial, sans-serif" font-size="14">Control plane + async orchestration</text>
+
+  <rect x="936" y="136" width="410" height="262" rx="20" fill="url(#cardC)"/>
+  <text x="966" y="184" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">go/</text>
+  <text x="966" y="214" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="17">relay</text>
+  <text x="966" y="239" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="17">agent</text>
+  <text x="966" y="264" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="17">proto</text>
+  <text x="966" y="297" fill="#FED7AA" font-family="Segoe UI, Arial, sans-serif" font-size="14">Data plane and tunnel protocol</text>
+
+  <rect x="56" y="430" width="410" height="262" rx="20" fill="url(#cardD)"/>
+  <text x="86" y="478" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">packages/</text>
+  <text x="86" y="508" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="17">config, sdk, ui, lint, tsconfig</text>
+  <text x="86" y="541" fill="#C7D2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Shared contracts and build consistency</text>
+
+  <rect x="496" y="430" width="410" height="262" rx="20" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="526" y="478" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">infra/</text>
+  <text x="526" y="508" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="17">docker, monitoring, migrations</text>
+  <text x="526" y="533" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="17">cloudflare automation</text>
+  <text x="526" y="566" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="14">Deployability and operations baseline</text>
+
+  <rect x="936" y="430" width="410" height="262" rx="20" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="966" y="478" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">docs/ + scripts/</text>
+  <text x="966" y="508" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="17">runbooks, architecture, deep flows</text>
+  <text x="966" y="533" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="17">smoke/resilience/chaos tooling</text>
+  <text x="966" y="566" fill="#475569" font-family="Segoe UI, Arial, sans-serif" font-size="14">Knowledge and reliability engineering</text>
+</svg>

@@ -4,7 +4,7 @@ This file lists project maintainers and ownership areas.
 
 ## Current Maintainers
 
-- `@flyingdarkdev` (project owner, platform architecture)
+- `@xgauravyaduvanshii` (project owner, platform architecture)
 
 ## Ownership Domains
 

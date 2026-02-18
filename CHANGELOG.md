@@ -23,5 +23,5 @@ and this project generally follows semantic versioning principles.
 - Admin operations for cert events/incidents, finance workflows, and audit chain checks.
 - Integration tests, smoke/resilience scripts, and CI workflows.
 
-[Unreleased]: https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel/releases/tag/v0.1.0
+[Unreleased]: https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel/releases/tag/v0.1.0
