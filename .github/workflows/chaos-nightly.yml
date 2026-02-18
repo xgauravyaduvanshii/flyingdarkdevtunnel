@@ -1,0 +1,54 @@
+name: Chaos Nightly
+
+on:
+  schedule:
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  chaos-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Start Postgres/Redis for chaos drill
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d postgres redis
+
+      - name: Run chaos drill
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:55432/fdt
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_SECRET: 12345678901234567890123456789012
+          JWT_REFRESH_SECRET: 12345678901234567890123456789012
+          AGENT_JWT_SECRET: 12345678901234567890123456789012
+          BASE_DOMAIN: tunnel.yourdomain.com
+          CHAOS_REQUESTS: 1500
+          CHAOS_CONCURRENCY: 100
+          CHAOS_MIN_SUCCESS_RATE: 0.1
+          CHAOS_MAX_FAILURE_RATE: 0.97
+          CHAOS_REDIS_FAULT: "true"
+        run: bash scripts/chaos-drill.sh
+
+      - name: Upload chaos logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-drill-logs
+          path: .data/chaos-logs

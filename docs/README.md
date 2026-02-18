@@ -10,6 +10,8 @@ This folder contains implementation-focused documentation for engineers operatin
 - `docs/testing-and-ci.md`: integration strategy, CI services, and smoke test flow.
 - `docs/runbooks/certificate-alerts.md`: cert-event incident response and paging checklist.
 - `docs/runbooks/billing-webhook-slo.md`: webhook latency SLO paging and runbook replay response.
+- `docs/runbooks/security-rotation.md`: weekly secret rotation verification and response workflow.
+- `docs/runbooks/chaos-drill.md`: nightly restart/fault drill process and expected artifacts.
 - `docs/runbooks/ops-oncall.md`: alert-to-action runbooks for billing webhook and certificate lifecycle incidents.
 - `infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`: pre-provisioned dashboard for relay, billing, and certificate SLOs.
 

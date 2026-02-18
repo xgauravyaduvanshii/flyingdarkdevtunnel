@@ -8,6 +8,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:resilience": "bash scripts/relay-resilience.sh",
+    "test:chaos": "bash scripts/chaos-drill.sh",
     "lint": "turbo run lint",
     "format": "turbo run format",
     "typecheck": "turbo run typecheck",

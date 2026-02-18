@@ -33,6 +33,12 @@ for (const [key, value] of Object.entries(defaults)) {
   }
 }
 
+function randomTestIp(): string {
+  const hex = randomUUID().replace(/-/g, "");
+  const octet = (offset: number) => (Number.parseInt(hex.slice(offset, offset + 2), 16) % 254) + 1;
+  return `10.${octet(0)}.${octet(2)}.${octet(4)}`;
+}
+
 describe("api integration", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
 
@@ -454,9 +460,10 @@ describe("api integration", () => {
     expect(adminExportTaxRes.body).toContain(taxId);
   }, 30_000);
 
-  it("supports team RBAC expansion, SSO config, and billing report export queue", async () => {
+  it("supports team RBAC, SSO, SCIM role templates, and billing report export queue", async () => {
     const email = `integration-rbac-owner-${randomUUID()}@example.com`;
     const teammateEmail = `integration-rbac-user-${randomUUID()}@example.com`;
+    const scimEmail = `integration-scim-user-${randomUUID()}@example.com`;
     const password = "passw0rd123";
 
     const ownerRegister = await app.inject({
@@ -473,6 +480,13 @@ describe("api integration", () => {
       payload: { email: teammateEmail, password, orgName: "Teammate Org" },
     });
     expect(teammateRegister.statusCode).toBe(201);
+
+    const scimRegister = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email: scimEmail, password, orgName: "SCIM User Org" },
+    });
+    expect(scimRegister.statusCode).toBe(201);
 
     const addMemberRes = await app.inject({
       method: "POST",
@@ -527,6 +541,71 @@ describe("api integration", () => {
     expect(ssoBody.sso.provider).toBe("saml");
     expect(ssoBody.sso.enabled).toBe(true);
 
+    const templateUpsertRes = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/role-templates/developer",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { role: "member", description: "SCIM developer template" },
+    });
+    expect(templateUpsertRes.statusCode).toBe(200);
+
+    const templateListRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/role-templates",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(templateListRes.statusCode).toBe(200);
+    const templateListBody = templateListRes.json() as {
+      templates: Array<{ template_key: string; role: string }>;
+    };
+    expect(templateListBody.templates.some((row) => row.template_key === "developer" && row.role === "member")).toBe(true);
+
+    const scimProvisionRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/scim/provision/users",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: {
+        operations: [{ email: scimEmail, templateKey: "developer", active: true }],
+      },
+    });
+    expect(scimProvisionRes.statusCode).toBe(200);
+    const scimProvisionBody = scimProvisionRes.json() as {
+      results: Array<{ email: string; status: string; role: string | null }>;
+    };
+    expect(scimProvisionBody.results.some((row) => row.email === scimEmail && row.status === "applied" && row.role === "member")).toBe(
+      true,
+    );
+
+    const scimEventsRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/scim/provision/events?limit=50",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(scimEventsRes.statusCode).toBe(200);
+    const scimEventsBody = scimEventsRes.json() as {
+      events: Array<{ email: string; status: string; action: string }>;
+    };
+    expect(scimEventsBody.events.some((row) => row.email === scimEmail && row.status === "applied" && row.action === "upsert")).toBe(true);
+
+    const membersAfterScimRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/members",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(membersAfterScimRes.statusCode).toBe(200);
+    const membersAfterScimBody = membersAfterScimRes.json() as { members: Array<{ email: string; role: string }> };
+    expect(membersAfterScimBody.members.some((member) => member.email === scimEmail && member.role === "member")).toBe(true);
+
+    const scimDeactivateRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/scim/provision/users",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: {
+        operations: [{ email: scimEmail, active: false }],
+      },
+    });
+    expect(scimDeactivateRes.statusCode).toBe(200);
+
     const reportCreateRes = await app.inject({
       method: "POST",
       url: "/v1/admin/billing-reports/exports",
@@ -574,6 +653,15 @@ describe("api integration", () => {
     expect(reconciledRow.rows[0]?.status).toBe("pending");
     expect(reconciledRow.rows[0]?.attempts).toBe(0);
     expect(reconciledRow.rows[0]?.next_attempt_at).toBeTruthy();
+
+    const membersAfterDeactivateRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/members",
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(membersAfterDeactivateRes.statusCode).toBe(200);
+    const membersAfterDeactivateBody = membersAfterDeactivateRes.json() as { members: Array<{ email: string }> };
+    expect(membersAfterDeactivateBody.members.some((member) => member.email === scimEmail)).toBe(false);
   }, 30_000);
 
   it("enforces token revoke list and signed runbook replay with dunning visibility", async () => {
@@ -589,6 +677,7 @@ describe("api integration", () => {
     const registerBody = registerRes.json() as { accessToken: string };
     const revokedAccessToken = registerBody.accessToken;
     const claims = jwt.verify(revokedAccessToken, process.env.JWT_SECRET!) as { orgId: string };
+    const loginIp = randomTestIp();
 
     const revokeRes = await app.inject({
       method: "POST",
@@ -608,10 +697,33 @@ describe("api integration", () => {
     const loginRes = await app.inject({
       method: "POST",
       url: "/v1/auth/login",
+      remoteAddress: loginIp,
       payload: { email, password },
     });
     expect(loginRes.statusCode).toBe(200);
     const freshAccessToken = (loginRes.json() as { accessToken: string }).accessToken;
+
+    await app.db.query(`UPDATE memberships SET created_at = NOW() - INTERVAL '120 days' WHERE org_id = $1`, [claims.orgId]);
+
+    const rotationHealthRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/secrets/rotation-health?maxAgeDays=30&limit=200",
+      headers: { authorization: `Bearer ${freshAccessToken}` },
+    });
+    expect(rotationHealthRes.statusCode).toBe(200);
+    const rotationHealthBody = rotationHealthRes.json() as { staleUsers: number; totalUsers: number };
+    expect(rotationHealthBody.totalUsers).toBeGreaterThan(0);
+    expect(rotationHealthBody.staleUsers).toBeGreaterThan(0);
+
+    const rotationScanRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/secrets/rotation/scan",
+      headers: { authorization: `Bearer ${freshAccessToken}` },
+      payload: { maxAgeDays: 30 },
+    });
+    expect(rotationScanRes.statusCode).toBe(200);
+    const rotationScanBody = rotationScanRes.json() as { staleCount: number };
+    expect(rotationScanBody.staleCount).toBeGreaterThan(0);
 
     const dunningId = randomUUID();
     await app.db.query(
@@ -1188,11 +1300,13 @@ describe("api integration", () => {
       payload: { email, password, orgName: "Integration Abuse Org" },
     });
     expect(registerRes.statusCode).toBe(201);
+    const abuseIp = randomTestIp();
 
     for (let i = 0; i < 10; i += 1) {
       const failedLogin = await app.inject({
         method: "POST",
         url: "/v1/auth/login",
+        remoteAddress: abuseIp,
         payload: { email, password: "wrong-password-123" },
       });
       expect(failedLogin.statusCode).toBe(401);
@@ -1201,6 +1315,7 @@ describe("api integration", () => {
     const blockedLogin = await app.inject({
       method: "POST",
       url: "/v1/auth/login",
+      remoteAddress: abuseIp,
       payload: { email, password },
     });
     expect(blockedLogin.statusCode).toBe(429);

@@ -53,6 +53,24 @@
     - `backpressure.json`
     - `storm.json`
 
+## Chaos drill
+- Script: `scripts/chaos-drill.sh` (root alias: `pnpm test:chaos`)
+- Nightly workflow: `.github/workflows/chaos-nightly.yml`
+- Scope:
+  - active load during relay/API restarts,
+  - optional Redis restart fault injection,
+  - threshold-based pass/fail from success and failure ratios.
+- Artifacts:
+  - `.data/chaos-logs/chaos-report.json`
+  - service logs for API/relay/agent/upstream.
+
+## Secret rotation verification
+- Script: `pnpm --filter @fdt/api verify:secret-rotations`
+- Weekly workflow: `.github/workflows/security-rotation-weekly.yml`
+- Behavior:
+  - checks stale authtoken rotation posture by org,
+  - fails when `SECRET_ROTATION_ENFORCE=true` and stale orgs are detected.
+
 ## CI workflow
 - File: `.github/workflows/ci.yml`
 - Jobs:
