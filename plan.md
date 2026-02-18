@@ -17,6 +17,12 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Billing webhook hardening:
+  - Added raw-body signature verification path for Stripe and Razorpay.
+  - Added webhook idempotency/replay store (`billing_webhook_events`).
+  - Added duplicate-event handling that safely no-ops repeated deliveries.
+  - Added webhook age enforcement via `BILLING_WEBHOOK_MAX_AGE_SECONDS`.
+  - Added integration coverage for duplicate Razorpay webhook processing.
 - Multi-provider billing integration:
   - Added provider-aware checkout for Stripe, Razorpay, and PayPal.
   - Added provider-specific webhook endpoints and plan-entitlement mapping.
@@ -54,8 +60,8 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
   - Add cert-expiry alerting and on-call runbooks.
 - Payment production hardening:
-  - Raw-body signature verification for all providers in production edge path.
-  - Idempotency and replay-protection store for webhook events.
+  - Add cleanup/retention jobs and admin visibility for webhook event store.
+  - Add provider-specific alerting thresholds for failed webhook processing.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:

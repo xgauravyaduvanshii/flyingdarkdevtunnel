@@ -30,6 +30,13 @@ Webhook handlers map external subscription state to:
 
 Entitlements are refreshed from `plans` when a paid plan is active.
 
+## Webhook hardening
+- Signature verification now uses raw request body bytes for Stripe and Razorpay.
+- PayPal signature verification uses PayPal verify-webhook API path.
+- Replay/idempotency protection is backed by `billing_webhook_events` with unique `(provider, event_id)`.
+- Duplicate event deliveries return success and do not re-apply entitlements.
+- `BILLING_WEBHOOK_MAX_AGE_SECONDS` enforces max age for signed webhook events.
+
 ## DB mapping
 - `plans`:
   - `stripe_price_id`
@@ -50,3 +57,4 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 - Razorpay: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
 - PayPal: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_ENVIRONMENT`
 - Optional return URLs: `BILLING_SUCCESS_URL`, `BILLING_CANCEL_URL`
+- Webhook replay window: `BILLING_WEBHOOK_MAX_AGE_SECONDS`
