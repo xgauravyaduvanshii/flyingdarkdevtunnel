@@ -48,7 +48,7 @@ jobs:
 
       - name: Upload chaos logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: chaos-drill-logs
           path: .data/chaos-logs
