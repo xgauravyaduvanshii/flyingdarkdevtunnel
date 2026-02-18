@@ -43,6 +43,8 @@ This project is designed so that each critical behavior has:
 - deterministic retry/reconcile paths,
 - and measurable operational signals.
 
+> Build fast like a developer tool, run safe like production infrastructure.
+
 ![Platform Pillars](docs/assets/platform-pillars.svg)
 
 ---
@@ -54,6 +56,10 @@ This project is designed so that each critical behavior has:
 - Tunnel raw TCP services for SSH, DB diagnostics, and IoT flows.
 - Manage billing entitlements and audit trails from the same platform model.
 - Run with operational confidence using dashboards, alerts, and recovery runbooks.
+
+This repository intentionally speaks to multiple personas who collaborate on one shared system model instead of disconnected tools.
+
+![Persona and Use-Case Map](docs/assets/persona-usecases.svg)
 
 ---
 
@@ -72,6 +78,7 @@ This project is designed so that each critical behavior has:
 | Operations | Prometheus, Grafana, alert rules, incident runbooks |
 
 ![Feature and Plan Comparison](docs/assets/feature-plan-comparison.svg)
+![Protocol Capability Grid](docs/assets/protocol-capability-grid.svg)
 
 ---
 
@@ -157,6 +164,7 @@ Security is not treated as an add-on; it is encoded in runtime decisions and asy
 ![Security Defense Layers](docs/assets/security-defense-layers.svg)
 ![Certificate Incident Timeline](docs/assets/cert-incident-timeline.svg)
 ![Edge Policy Flow](docs/assets/edge-policy-flow.svg)
+![Threat to Response Map](docs/assets/threat-response-map.svg)
 
 Implemented security controls include:
 - hashed authtokens and short-lived signed agent tokens,
@@ -196,6 +204,7 @@ See:
 
 ![Release and Operations Loop](docs/assets/release-ops-loop.svg)
 ![Roadmap Flight Path](docs/assets/roadmap-flightpath.svg)
+![Observability Command Center](docs/assets/observability-command-center.svg)
 
 Reliability foundation:
 - Prometheus and alert rules under `infra/monitoring/`,
@@ -208,6 +217,7 @@ Reliability foundation:
 ## Deployment Blueprint
 
 ![Deployment Blueprint](docs/assets/deployment-blueprint.svg)
+![Custom Domain Lifecycle Map](docs/assets/domain-lifecycle-map.svg)
 
 The platform can run as a managed SaaS stack on Ubuntu VPS with Docker Compose:
 - edge relay for ingress and policy gates,
@@ -265,6 +275,13 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/fdt \
 REDIS_URL=redis://127.0.0.1:6379 \
 pnpm --filter @fdt/api test:integration
 ```
+
+![CI and Release Gates](docs/assets/ci-release-gates.svg)
+
+Release quality philosophy:
+- code quality checks prevent drift in shared contracts and policies,
+- integration gates validate behavior across API, workers, and relay surfaces,
+- resilience checks validate recovery workflows before customer-impacting changes ship.
 
 ---
 

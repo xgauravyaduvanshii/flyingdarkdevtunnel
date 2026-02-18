@@ -1,0 +1,44 @@
+<svg width="1300" height="740" viewBox="0 0 1300 740" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Threat response map">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="740" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Threat to Response Map</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Each common risk has a direct protection layer and an operational recovery path.</text>
+
+  <rect x="80" y="140" width="420" height="110" rx="14" fill="#F97316"/>
+  <text x="110" y="184" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Threat: Unauthorized Access</text>
+  <text x="110" y="212" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Credential leaks, unguarded endpoints, session abuse</text>
+
+  <rect x="540" y="140" width="680" height="110" rx="14" fill="#22C55E"/>
+  <text x="570" y="184" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Response: JWT limits, token revoke list, basic auth, CIDR allowlist</text>
+  <text x="570" y="212" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Runbook: rotate tokens, block indicators, verify audit-chain entries</text>
+
+  <rect x="80" y="280" width="420" height="110" rx="14" fill="#F97316"/>
+  <text x="110" y="324" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Threat: Billing Webhook Spoofing</text>
+  <text x="110" y="352" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Fake callbacks, replay injection, entitlement drift</text>
+
+  <rect x="540" y="280" width="680" height="110" rx="14" fill="#22C55E"/>
+  <text x="570" y="324" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Response: Signature verification, idempotency, replay/reconcile workers</text>
+  <text x="570" y="352" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Runbook: provider event replay, dunning correction, finance export diff checks</text>
+
+  <rect x="80" y="420" width="420" height="110" rx="14" fill="#F97316"/>
+  <text x="110" y="464" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Threat: TLS/Certificate Drift</text>
+  <text x="110" y="492" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Expired certs, wrong bindings, replication mismatch</text>
+
+  <rect x="540" y="420" width="680" height="110" rx="14" fill="#22C55E"/>
+  <text x="570" y="464" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Response: Cert lifecycle worker, incident states, renewal signals</text>
+  <text x="570" y="492" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Runbook: staged rollback, emergency cert path, replication probe validation</text>
+
+  <rect x="80" y="560" width="420" height="110" rx="14" fill="#F97316"/>
+  <text x="110" y="604" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Threat: Traffic Abuse and Flooding</text>
+  <text x="110" y="632" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Burst traffic, brute probes, connection storm events</text>
+
+  <rect x="540" y="560" width="680" height="110" rx="14" fill="#22C55E"/>
+  <text x="570" y="604" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Response: Backpressure, rate limits, anomaly signals, connection caps</text>
+  <text x="570" y="632" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Runbook: isolate tunnel, apply stricter policy, observe recovery metrics</text>
+</svg>

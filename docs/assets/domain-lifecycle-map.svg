@@ -1,0 +1,40 @@
+<svg width="1300" height="720" viewBox="0 0 1300 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Domain lifecycle map">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="720" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Custom Domain Lifecycle Map</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">From user claim to DNS verification, certificate issuance, and active edge routing.</text>
+
+  <rect x="80" y="140" width="220" height="120" rx="16" fill="#0EA5E9"/>
+  <text x="108" y="186" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Claim</text>
+  <text x="108" y="214" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">User adds domain</text>
+
+  <rect x="350" y="140" width="220" height="120" rx="16" fill="#22C55E"/>
+  <text x="378" y="186" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Verify DNS</text>
+  <text x="378" y="214" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">TXT/CNAME checks</text>
+
+  <rect x="620" y="140" width="220" height="120" rx="16" fill="#F97316"/>
+  <text x="648" y="186" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Issue Cert</text>
+  <text x="648" y="214" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">ACME / autocert path</text>
+
+  <rect x="890" y="140" width="220" height="120" rx="16" fill="#6366F1"/>
+  <text x="918" y="186" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Activate</text>
+  <text x="918" y="214" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Bind host to tunnel</text>
+
+  <line x1="300" y1="200" x2="350" y2="200" stroke="#334155" stroke-width="4"/>
+  <line x1="570" y1="200" x2="620" y2="200" stroke="#334155" stroke-width="4"/>
+  <line x1="840" y1="200" x2="890" y2="200" stroke="#334155" stroke-width="4"/>
+
+  <rect x="140" y="320" width="1020" height="300" rx="20" fill="#0F172A"/>
+  <text x="178" y="370" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Operational Safeguards</text>
+  <text x="178" y="410" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Domain ownership remains linked to org/account and entitlement state.</text>
+  <text x="178" y="442" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Verification status transitions are auditable and exposed via API/admin views.</text>
+  <text x="178" y="474" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Certificate failures trigger incident records, retries, and runbook escalation.</text>
+  <text x="178" y="506" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Renewal and replication checks run before status is considered healthy.</text>
+  <text x="178" y="538" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="16">- Deactivation or conflicts are reconciled through deterministic policy rules.</text>
+</svg>

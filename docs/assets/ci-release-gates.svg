@@ -1,0 +1,48 @@
+<svg width="1300" height="740" viewBox="0 0 1300 740" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CI and release gates">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="740" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">CI and Release Gates</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Every release passes code quality, integration, and operational readiness checks.</text>
+
+  <rect x="80" y="140" width="240" height="120" rx="14" fill="#0EA5E9"/>
+  <text x="114" y="186" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Commit</text>
+  <text x="114" y="214" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Feature + docs update</text>
+
+  <rect x="370" y="140" width="240" height="120" rx="14" fill="#22C55E"/>
+  <text x="404" y="186" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Lint/Type</text>
+  <text x="404" y="214" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">TS + shared packages</text>
+
+  <rect x="660" y="140" width="240" height="120" rx="14" fill="#F97316"/>
+  <text x="694" y="186" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Unit Tests</text>
+  <text x="694" y="214" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">API/worker logic checks</text>
+
+  <rect x="950" y="140" width="240" height="120" rx="14" fill="#6366F1"/>
+  <text x="984" y="186" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Build</text>
+  <text x="984" y="214" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Apps + Go binaries</text>
+
+  <rect x="170" y="340" width="420" height="160" rx="16" fill="#111827"/>
+  <text x="202" y="388" fill="#F9FAFB" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Integration Tests</text>
+  <text x="202" y="420" fill="#9CA3AF" font-family="Segoe UI, Arial, sans-serif" font-size="14">Ephemeral Postgres/Redis, API + worker end-to-end checks</text>
+
+  <rect x="710" y="340" width="420" height="160" rx="16" fill="#1E293B"/>
+  <text x="742" y="388" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Resilience Gates</text>
+  <text x="742" y="420" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="14">Smoke + chaos scripts, replay/reconcile drill paths</text>
+
+  <rect x="310" y="560" width="680" height="130" rx="16" fill="#0F172A"/>
+  <text x="344" y="608" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Release Decision</text>
+  <text x="344" y="636" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="14">Ship only when code checks, integration health, and runbook readiness all pass.</text>
+
+  <line x1="320" y1="200" x2="370" y2="200" stroke="#334155" stroke-width="3"/>
+  <line x1="610" y1="200" x2="660" y2="200" stroke="#334155" stroke-width="3"/>
+  <line x1="900" y1="200" x2="950" y2="200" stroke="#334155" stroke-width="3"/>
+  <line x1="500" y1="260" x2="380" y2="340" stroke="#334155" stroke-width="3"/>
+  <line x1="980" y1="260" x2="920" y2="340" stroke="#334155" stroke-width="3"/>
+  <line x1="380" y1="500" x2="470" y2="560" stroke="#334155" stroke-width="3"/>
+  <line x1="920" y1="500" x2="830" y2="560" stroke="#334155" stroke-width="3"/>
+</svg>

@@ -94,6 +94,12 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - `docs/assets/deployment-blueprint.svg`
 - `docs/assets/inspection-replay-cycle.svg`
 - `docs/assets/roadmap-flightpath.svg`
+- `docs/assets/persona-usecases.svg`
+- `docs/assets/protocol-capability-grid.svg`
+- `docs/assets/domain-lifecycle-map.svg`
+- `docs/assets/threat-response-map.svg`
+- `docs/assets/observability-command-center.svg`
+- `docs/assets/ci-release-gates.svg`
 
 ---
 

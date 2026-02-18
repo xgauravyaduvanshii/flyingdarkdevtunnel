@@ -1,0 +1,45 @@
+<svg width="1300" height="760" viewBox="0 0 1300 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Observability command center">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="760" fill="url(#bg)"/>
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Observability Command Center</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Metrics, logs, incidents, and runbooks combined into one response view.</text>
+
+  <rect x="80" y="130" width="560" height="260" rx="18" fill="#0F172A"/>
+  <text x="112" y="176" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Prometheus Signals</text>
+  <text x="112" y="208" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Relay active sessions and connection pressure</text>
+  <text x="112" y="236" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Webhook ingest latency and error ratio</text>
+  <text x="112" y="264" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Certificate renewal and expiry horizon</text>
+  <text x="112" y="292" fill="#CBD5E1" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Replay and reconcile backlog depth</text>
+
+  <rect x="660" y="130" width="560" height="260" rx="18" fill="#111827"/>
+  <text x="692" y="176" fill="#F9FAFB" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Grafana Dashboards</text>
+  <text x="692" y="208" fill="#9CA3AF" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Edge health and protocol split</text>
+  <text x="692" y="236" fill="#9CA3AF" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Finance and webhook SLO windows</text>
+  <text x="692" y="264" fill="#9CA3AF" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Domain/certificate incident timeline</text>
+  <text x="692" y="292" fill="#9CA3AF" font-family="Segoe UI, Arial, sans-serif" font-size="15">- Runbook execution confirmation signals</text>
+
+  <rect x="80" y="430" width="360" height="220" rx="18" fill="#0EA5E9"/>
+  <text x="112" y="476" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Logs</text>
+  <text x="112" y="508" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Structured request and event trails</text>
+  <text x="112" y="534" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14">Correlated by tunnel/session IDs</text>
+
+  <rect x="470" y="430" width="360" height="220" rx="18" fill="#22C55E"/>
+  <text x="502" y="476" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Alerts</text>
+  <text x="502" y="508" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">SLO-driven pages and warning routes</text>
+  <text x="502" y="534" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14">Mapped to incident classes</text>
+
+  <rect x="860" y="430" width="360" height="220" rx="18" fill="#F97316"/>
+  <text x="892" y="476" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">Runbooks</text>
+  <text x="892" y="508" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Containment, replay, recover, verify</text>
+  <text x="892" y="534" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14">Post-incident audit closure steps</text>
+
+  <line x1="360" y1="390" x2="260" y2="430" stroke="#334155" stroke-width="3"/>
+  <line x1="650" y1="390" x2="650" y2="430" stroke="#334155" stroke-width="3"/>
+  <line x1="940" y1="390" x2="1040" y2="430" stroke="#334155" stroke-width="3"/>
+</svg>
