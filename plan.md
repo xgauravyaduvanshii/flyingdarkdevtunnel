@@ -47,6 +47,12 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Added region claim propagation into agent token and exchange payload.
   - Added relay region identity and region-aware edge assignment (`RELAY_REGION`, `RELAY_EDGE_POOL`).
   - Added CLI region flags for `http`/`tcp` and config-file `region` support.
+- Performance and resilience hardening:
+  - Added plan-bound per-tunnel concurrency claims (`maxConcurrentConns`) into agent tokens.
+  - Added relay backpressure enforcement for HTTP and TCP concurrency (returns `429` / rejects excess streams).
+  - Added resilience tooling:
+    - `scripts/http-load.mjs` concurrent HTTP load runner,
+    - `scripts/relay-resilience.sh` baseline/backpressure/reconnect-storm scenario runner.
 - Enterprise controls + security baseline expansion:
   - Added team/org RBAC APIs (`/v1/admin/members*`) with owner safety checks.
   - Added SSO config scaffold APIs (`GET/PUT /v1/admin/sso`).
@@ -131,10 +137,10 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Event-driven issuance/renewal status integration shipped; production cert-manager webhook auth/validation hardening remains.
-  - Alert-runbook trigger plumbing shipped; source provenance validation and stricter emitter identity controls remain.
+  - On-call runbook scaffold shipped (`docs/runbooks/certificate-alerts.md`); source provenance validation and stricter emitter identity controls remain.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
-  - Dashboard SLO/paging baseline shipped via Prometheus worker metrics + alert rules.
+  - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
   - Tune retry and notification policy by provider in production telemetry.
 
 ## Next (Implementation Queue)
@@ -150,8 +156,8 @@ Phase 1 (MVP hardening + production readiness improvements)
    - Team/org RBAC expansion.
    - SSO and immutable audit controls.
 5. Performance and resilience:
-   - Load tests for relay concurrency and reconnect storms.
-   - Backpressure and connection limit policy stress tests.
+  - Promote resilience suite into CI/nightly with environment-specific thresholds.
+  - Add relay metrics dashboards for active in-flight requests and rejected-overlimit counts.
 6. Security hardening:
    - Secret rotation workflows and token revoke list.
    - Enhanced abuse/rate limiting and anomaly detection.

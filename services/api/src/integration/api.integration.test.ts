@@ -16,6 +16,11 @@ const defaults: Record<string, string> = {
   ALLOWED_REGIONS: "us,eu,ap",
   BILLING_RUNBOOK_SIGNING_SECRET: "integration_runbook_secret_32_chars_minimum",
   CERT_EVENT_INGEST_TOKEN: "integration_cert_ingest_token",
+  CERT_EVENT_SOURCE_KEYS: "cert_manager:cluster-eu=integration_cert_source_secret",
+  CERT_EVENT_REQUIRE_PROVENANCE: "true",
+  CERT_EVENT_MAX_AGE_SECONDS: "300",
+  RELAY_HEARTBEAT_TOKEN: "integration_relay_heartbeat_token",
+  RELAY_HEARTBEAT_MAX_AGE_SECONDS: "120",
 };
 
 for (const [key, value] of Object.entries(defaults)) {
@@ -754,20 +759,31 @@ describe("api integration", () => {
     });
     expect(policyRes.statusCode).toBe(200);
 
+    const certEventPayload = JSON.stringify({
+      source: "cert_manager",
+      clusterId: "cluster-eu",
+      sourceEventId: `evt_cert_${randomUUID().replace(/-/g, "")}`,
+      domainId,
+      eventType: "renewal_failed",
+      reason: "acme challenge timed out",
+    });
+    const certTimestamp = `${Math.floor(Date.now() / 1000)}`;
+    const certSignature = createHmac("sha256", "integration_cert_source_secret")
+      .update(`${certTimestamp}.${certEventPayload}`)
+      .digest("hex");
+
     const certEventRes = await app.inject({
       method: "POST",
       url: "/v1/domains/cert-events",
       headers: {
         "content-type": "application/json",
         "x-cert-event-token": process.env.CERT_EVENT_INGEST_TOKEN!,
+        "x-cert-source": "cert_manager",
+        "x-cert-cluster": "cluster-eu",
+        "x-cert-timestamp": certTimestamp,
+        "x-cert-signature": certSignature,
       },
-      payload: {
-        source: "cert_manager",
-        sourceEventId: `evt_cert_${randomUUID().replace(/-/g, "")}`,
-        domainId,
-        eventType: "renewal_failed",
-        reason: "acme challenge timed out",
-      },
+      payload: certEventPayload,
     });
     expect(certEventRes.statusCode).toBe(202);
 
@@ -966,5 +982,80 @@ describe("api integration", () => {
     expect(reconcileBody.ok).toBe(true);
     expect(reconcileBody.attempted).toBeGreaterThan(0);
     expect(reconcileBody.processed).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("accepts relay heartbeat updates and assigns region-aware edge", async () => {
+    const heartbeatRes = await app.inject({
+      method: "POST",
+      url: "/v1/relay/heartbeat",
+      headers: {
+        authorization: `Bearer ${process.env.RELAY_HEARTBEAT_TOKEN!}`,
+      },
+      payload: {
+        edgeId: "eu-edge-integration-1",
+        region: "eu",
+        status: "online",
+        capacity: 500,
+        inFlight: 10,
+        rejectedOverlimit: 0,
+      },
+    });
+    expect(heartbeatRes.statusCode).toBe(200);
+
+    const email = `integration-relay-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Relay Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const registerBody = registerRes.json() as { accessToken: string; authtoken: string };
+
+    const tunnelRes = await app.inject({
+      method: "POST",
+      url: "/v1/tunnels",
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: {
+        name: "relay-heartbeat-eu",
+        protocol: "http",
+        localAddr: "http://localhost:3000",
+        region: "eu",
+      },
+    });
+    expect(tunnelRes.statusCode).toBe(201);
+    const tunnelId = (tunnelRes.json() as { id: string }).id;
+
+    const startRes = await app.inject({
+      method: "POST",
+      url: `/v1/tunnels/${tunnelId}/start`,
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: {},
+    });
+    expect(startRes.statusCode).toBe(200);
+    const startBody = startRes.json() as { assignedEdge: string };
+    expect(startBody.assignedEdge).toBe("eu-edge-integration-1");
+
+    const exchangeRes = await app.inject({
+      method: "POST",
+      url: "/v1/agent/exchange",
+      payload: {
+        authtoken: registerBody.authtoken,
+        tunnelId,
+      },
+    });
+    expect(exchangeRes.statusCode).toBe(200);
+    const exchangeBody = exchangeRes.json() as { tunnel: { assignedEdge: string } };
+    expect(exchangeBody.tunnel.assignedEdge).toBe("eu-edge-integration-1");
+
+    const adminEdges = await app.inject({
+      method: "GET",
+      url: "/v1/admin/relay-edges?region=eu&limit=20",
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+    });
+    expect(adminEdges.statusCode).toBe(200);
+    const adminEdgesBody = adminEdges.json() as { edges: Array<{ edge_id: string }> };
+    expect(adminEdgesBody.edges.some((edge) => edge.edge_id === "eu-edge-integration-1")).toBe(true);
   }, 30_000);
 });

@@ -5,6 +5,7 @@ import { authRoutes } from "./auth.js";
 import { billingRoutes } from "./billing.js";
 import { domainRoutes } from "./domains.js";
 import { planRoutes } from "./plans.js";
+import { relayRoutes } from "./relay.js";
 import { requestRoutes } from "./requests.js";
 import { tunnelRoutes } from "./tunnels.js";
 
@@ -18,6 +19,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     await v1.register(billingRoutes, { prefix: "/billing" });
     await v1.register(adminRoutes, { prefix: "/admin" });
     await v1.register(agentRoutes, { prefix: "/agent" });
+    await v1.register(relayRoutes, { prefix: "/relay" });
   }, { prefix: "/v1" });
 
   app.get("/healthz", async () => ({ ok: true }));

@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from "fastify";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { getEntitlements } from "../lib/entitlements.js";
+import { pickRelayEdgeForRegion } from "../lib/edges.js";
 import { generateSubdomain } from "../lib/utils.js";
 
 const createTunnelSchema = z.object({
@@ -240,6 +241,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       region: row.region ?? "us",
       maxConcurrentConns: entitlements.max_concurrent_conns,
     });
+    const assignedEdge = await pickRelayEdgeForRegion(app, row.region ?? "us");
 
     await app.audit.log({
       actorUserId: request.authUser!.userId,
@@ -257,6 +259,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       tlsModes,
       region: row.region ?? "us",
       maxConcurrentConns: entitlements.max_concurrent_conns,
+      assignedEdge,
     };
   });
 

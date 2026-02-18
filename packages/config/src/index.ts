@@ -44,8 +44,17 @@ export const apiEnvSchema = z.object({
   BILLING_RUNBOOK_SIGNING_SECRET: z.string().optional(),
   BILLING_RUNBOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(300),
   CERT_EVENT_INGEST_TOKEN: z.string().optional(),
+  CERT_EVENT_SOURCE_KEYS: z.string().optional(),
+  CERT_EVENT_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(300),
+  CERT_EVENT_REQUIRE_PROVENANCE: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value.trim().toLowerCase() === "true"),
   BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
   ALLOWED_REGIONS: z.string().optional().default("us"),
+  RELAY_HEARTBEAT_TOKEN: z.string().optional(),
+  RELAY_HEARTBEAT_MAX_AGE_SECONDS: z.coerce.number().int().positive().optional().default(90),
   AGENT_JWT_SECRET: z.string().min(32),
   DOMAIN_VERIFY_STRICT: z
     .string()
@@ -68,7 +77,11 @@ export const relayEnvSchema = z.object({
   RELAY_BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
   RELAY_AGENT_JWT_SECRET: z.string().min(32),
   RELAY_REGION: z.string().default("us"),
-  RELAY_EDGE_POOL: z.string().optional().default("us=us-edge-1|us-edge-2|us-edge-3")
+  RELAY_EDGE_POOL: z.string().optional().default("us=us-edge-1|us-edge-2|us-edge-3"),
+  RELAY_HEARTBEAT_API_URL: z.string().url().optional(),
+  RELAY_HEARTBEAT_TOKEN: z.string().optional(),
+  RELAY_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
+  RELAY_ID: z.string().optional(),
 });
 
 export type RelayEnv = z.infer<typeof relayEnvSchema>;

@@ -99,6 +99,14 @@ REDIS_URL=redis://127.0.0.1:6379 \
 bash scripts/integration-smoke.sh
 ```
 
+Relay resilience/backpressure validation:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/fdt \
+REDIS_URL=redis://127.0.0.1:6379 \
+bash scripts/relay-resilience.sh
+```
+
 ## Billing providers
 
 - `POST /v1/billing/checkout-session` accepts `provider` = `stripe` | `razorpay` | `paypal`.
@@ -153,6 +161,13 @@ bash scripts/integration-smoke.sh
   - `CERT_ALERT_WEBHOOK_URL` (optional outbound webhook target)
   - `CERT_ALERT_COOLDOWN_SECONDS` (default: `1800`)
 
+## Relay concurrency backpressure
+
+- Agent tokens now carry `maxConcurrentConns` from org entitlements.
+- Relay enforces per-tunnel active request/stream caps and returns `429` when exceeded.
+- Relay fallback limit can be tuned with:
+  - `RELAY_DEFAULT_MAX_CONCURRENT_CONNS` (default: `100`)
+
 ## Example multi-tunnel config
 
 See `ourdomain.yml.example` or `go/ourdomain.example.yml`.
@@ -161,3 +176,4 @@ See `ourdomain.yml.example` or `go/ourdomain.example.yml`.
 
 - Live implementation plan: `plan.md`
 - Engineering docs: `docs/`
+- Incident runbooks: `docs/runbooks/`

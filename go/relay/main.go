@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flyingdarkdevtunnel/fdt/proto"
@@ -103,6 +104,12 @@ type relayState struct {
 	StaticKeyFile             string
 	AllowedTLSHosts           map[string]struct{}
 	DefaultMaxConcurrentConns int
+	RelayID                   string
+	HeartbeatAPIURL           string
+	HeartbeatToken            string
+	HeartbeatIntervalSeconds  int
+	HTTPOverlimitRejects      uint64
+	TCPOverlimitRejects       uint64
 
 	Mu        sync.RWMutex
 	ByTunnel  map[string]*session
@@ -140,6 +147,10 @@ func newRelayState() *relayState {
 		StaticKeyFile:             getEnv("RELAY_TLS_KEY_FILE", ""),
 		AllowedTLSHosts:           allowedHosts,
 		DefaultMaxConcurrentConns: getEnvInt("RELAY_DEFAULT_MAX_CONCURRENT_CONNS", 100),
+		RelayID:                   getEnv("RELAY_ID", ""),
+		HeartbeatAPIURL:           strings.TrimRight(getEnv("RELAY_HEARTBEAT_API_URL", ""), "/"),
+		HeartbeatToken:            getEnv("RELAY_HEARTBEAT_TOKEN", ""),
+		HeartbeatIntervalSeconds:  getEnvInt("RELAY_HEARTBEAT_INTERVAL_SECONDS", 15),
 		ByTunnel:                  map[string]*session{},
 		ByHost:                    map[string]*session{},
 		HostModes:                 map[string]string{},
@@ -148,6 +159,14 @@ func newRelayState() *relayState {
 
 	if state.Region == "" {
 		state.Region = "us"
+	}
+	if state.RelayID == "" {
+		host, _ := os.Hostname()
+		host = strings.TrimSpace(strings.ToLower(host))
+		if host == "" {
+			host = "relay"
+		}
+		state.RelayID = fmt.Sprintf("%s-%s", state.Region, host)
 	}
 	if len(state.EdgePool) == 0 {
 		state.EdgePool[state.Region] = []string{fmt.Sprintf("%s-edge-1", state.Region)}
@@ -187,6 +206,12 @@ func main() {
 			log.Printf("active sessions=%d hosts=%d", sessions, hosts)
 		}
 	}()
+
+	if state.HeartbeatAPIURL != "" && state.HeartbeatToken != "" {
+		go startRelayHeartbeatLoop(state)
+	} else {
+		log.Printf("relay heartbeat disabled: missing RELAY_HEARTBEAT_API_URL or RELAY_HEARTBEAT_TOKEN")
+	}
 
 	if err := <-errCh; err != nil {
 		log.Fatal(err)
@@ -268,6 +293,38 @@ func buildPublicHTTPHandler(state *relayState) http.Handler {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		tunnels, hosts, inFlightHTTP, activeTCP, httpRejected, tcpRejected := relayMetricsSnapshot(state)
+		w.Header().Set("content-type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = fmt.Fprintf(
+			w,
+			"# HELP fdt_relay_active_tunnels Active tunnel sessions.\n"+
+				"# TYPE fdt_relay_active_tunnels gauge\n"+
+				"fdt_relay_active_tunnels %d\n"+
+				"# HELP fdt_relay_active_hosts Active host routes.\n"+
+				"# TYPE fdt_relay_active_hosts gauge\n"+
+				"fdt_relay_active_hosts %d\n"+
+				"# HELP fdt_relay_inflight_http_requests Current in-flight HTTP requests waiting on agents.\n"+
+				"# TYPE fdt_relay_inflight_http_requests gauge\n"+
+				"fdt_relay_inflight_http_requests %d\n"+
+				"# HELP fdt_relay_active_tcp_streams Current active TCP streams.\n"+
+				"# TYPE fdt_relay_active_tcp_streams gauge\n"+
+				"fdt_relay_active_tcp_streams %d\n"+
+				"# HELP fdt_relay_http_overlimit_rejections_total Total rejected HTTP requests due to concurrency limits.\n"+
+				"# TYPE fdt_relay_http_overlimit_rejections_total counter\n"+
+				"fdt_relay_http_overlimit_rejections_total %d\n"+
+				"# HELP fdt_relay_tcp_overlimit_rejections_total Total rejected TCP streams due to concurrency limits.\n"+
+				"# TYPE fdt_relay_tcp_overlimit_rejections_total counter\n"+
+				"fdt_relay_tcp_overlimit_rejections_total %d\n",
+			tunnels,
+			hosts,
+			inFlightHTTP,
+			activeTCP,
+			httpRejected,
+			tcpRejected,
+		)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		host := normalizeHost(r.Host)
 		if !isSafeHost(host) {
@@ -313,6 +370,7 @@ func buildPublicHTTPHandler(state *relayState) http.Handler {
 		s.PendingMu.Lock()
 		if s.MaxConcurrentConns > 0 && len(s.PendingHTTP) >= s.MaxConcurrentConns {
 			s.PendingMu.Unlock()
+			atomic.AddUint64(&state.HTTPOverlimitRejects, 1)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "tunnel concurrency limit reached", http.StatusTooManyRequests)
 			return
@@ -365,6 +423,98 @@ func buildPublicHTTPHandler(state *relayState) http.Handler {
 	})
 
 	return mux
+}
+
+func relayMetricsSnapshot(state *relayState) (int, int, int, int, uint64, uint64) {
+	state.Mu.RLock()
+	sessions := make([]*session, 0, len(state.ByTunnel))
+	for _, s := range state.ByTunnel {
+		sessions = append(sessions, s)
+	}
+	tunnels := len(state.ByTunnel)
+	hosts := len(state.ByHost)
+	state.Mu.RUnlock()
+
+	inFlightHTTP := 0
+	activeTCP := 0
+	for _, s := range sessions {
+		s.PendingMu.Lock()
+		inFlightHTTP += len(s.PendingHTTP)
+		activeTCP += len(s.TCPStreams)
+		s.PendingMu.Unlock()
+	}
+
+	return tunnels, hosts, inFlightHTTP, activeTCP, atomic.LoadUint64(&state.HTTPOverlimitRejects), atomic.LoadUint64(&state.TCPOverlimitRejects)
+}
+
+func startRelayHeartbeatLoop(state *relayState) {
+	interval := time.Duration(state.HeartbeatIntervalSeconds) * time.Second
+	if interval < 3*time.Second {
+		interval = 3 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		if err := sendRelayHeartbeat(state); err != nil {
+			log.Printf("relay heartbeat failed: %v", err)
+		}
+		<-ticker.C
+	}
+}
+
+func sendRelayHeartbeat(state *relayState) error {
+	if state.HeartbeatAPIURL == "" || state.HeartbeatToken == "" {
+		return nil
+	}
+
+	tunnels, hosts, inFlightHTTP, activeTCP, httpRejected, tcpRejected := relayMetricsSnapshot(state)
+	inFlight := inFlightHTTP + activeTCP
+	payload := map[string]any{
+		"edgeId":            state.RelayID,
+		"region":            state.Region,
+		"status":            "online",
+		"capacity":          state.DefaultMaxConcurrentConns,
+		"inFlight":          inFlight,
+		"rejectedOverlimit": int64(httpRejected + tcpRejected),
+		"metadata": map[string]any{
+			"activeTunnels":     tunnels,
+			"activeHosts":       hosts,
+			"inflightHTTP":      inFlightHTTP,
+			"activeTCPStreams":  activeTCP,
+			"httpRejectedTotal": httpRejected,
+			"tcpRejectedTotal":  tcpRejected,
+			"reportedAt":        time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/v1/relay/heartbeat", strings.TrimRight(state.HeartbeatAPIURL, "/"))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+state.HeartbeatToken)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return nil
 }
 
 func startPublicHTTPServer(state *relayState) error {
@@ -534,7 +684,7 @@ func startTLSPassthroughServer(state *relayState) error {
 				return
 			}
 
-			attachTCPConnectionToSession(s, wrappedConn)
+			attachTCPConnectionToSession(state, s, wrappedConn)
 		}(conn)
 	}
 }
@@ -696,29 +846,30 @@ func reserveTCPPort(state *relayState, s *session) (int, error) {
 
 		state.ByTCPPort[port] = s
 		state.ByTunnel[s.TunnelID] = s
-		go acceptTCPConnections(s, listener)
+		go acceptTCPConnections(state, s, listener)
 		return port, nil
 	}
 
 	return 0, fmt.Errorf("no ports available in range %d-%d", state.TCPStartPort, state.TCPEndPort)
 }
 
-func acceptTCPConnections(s *session, listener net.Listener) {
+func acceptTCPConnections(state *relayState, s *session, listener net.Listener) {
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
-		attachTCPConnectionToSession(s, conn)
+		attachTCPConnectionToSession(state, s, conn)
 	}
 }
 
-func attachTCPConnectionToSession(s *session, conn net.Conn) {
+func attachTCPConnectionToSession(state *relayState, s *session, conn net.Conn) {
 	streamID := uuid.NewString()
 	s.PendingMu.Lock()
 	if s.MaxConcurrentConns > 0 && len(s.TCPStreams) >= s.MaxConcurrentConns {
 		s.PendingMu.Unlock()
+		atomic.AddUint64(&state.TCPOverlimitRejects, 1)
 		_ = conn.Close()
 		log.Printf("tcp stream rejected tunnel=%s reason=concurrency_limit limit=%d", s.TunnelID, s.MaxConcurrentConns)
 		return

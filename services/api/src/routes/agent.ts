@@ -2,6 +2,7 @@ import argon2 from "argon2";
 import { FastifyPluginAsync } from "fastify";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { pickRelayEdgeForRegion } from "../lib/edges.js";
 import { getEntitlements } from "../lib/entitlements.js";
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
@@ -80,6 +81,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const entitlements = await getEntitlements(app, tunnel.org_id);
+    const assignedEdge = await pickRelayEdgeForRegion(app, tunnel.region ?? "us");
 
     const token = await app.auth.signAgentToken({
       userId: tunnel.user_id,
@@ -122,6 +124,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           ipAllowlist: tunnel.ip_allowlist,
         },
         maxConcurrentConns: entitlements.max_concurrent_conns,
+        assignedEdge,
       },
     };
   });
