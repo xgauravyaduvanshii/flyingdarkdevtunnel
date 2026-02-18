@@ -1,0 +1,65 @@
+name: Feature Request
+description: Propose a new feature or capability
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the feature, why it matters, and what tradeoffs it introduces.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Suggested implementation or behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternatives did you evaluate?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Small (localized change)
+        - Medium (cross-service change)
+        - Large (architecture-level change)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Target Area
+      options:
+        - Tunneling / Relay
+        - Agent CLI
+        - API / Control Plane
+        - Billing / Finance Ops
+        - Certificate Lifecycle
+        - Security / Access Controls
+        - UI / Admin Console
+        - CI / Reliability
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Suggested Acceptance Criteria
+      description: How should we verify this feature is complete?

@@ -1,0 +1,27 @@
+name: Docs Improvement
+description: Request documentation corrections or enhancements
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Affected File/Page
+      description: Which doc is incorrect or missing?
+      placeholder: docs/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong or unclear?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested Improvement
+      description: Share improved wording, structure, or examples

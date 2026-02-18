@@ -15,9 +15,10 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 ### Platform Engineer
 
 1. `docs/architecture.md`
-2. `docs/security-and-tls.md`
-3. `docs/certificate-lifecycle.md`
-4. `docs/testing-and-ci.md`
+2. `docs/how-it-works.md`
+3. `docs/security-and-tls.md`
+4. `docs/certificate-lifecycle.md`
+5. `docs/testing-and-ci.md`
 
 ### Billing/Finance Operations
 
@@ -39,6 +40,7 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 | File | Focus | When to Open It |
 |---|---|---|
 | `docs/architecture.md` | Control-plane/data-plane topology and boundaries | New contributors, major refactors |
+| `docs/how-it-works.md` | End-to-end flow diagrams for tunnel, cert, and billing pipelines | Feature walkthroughs and onboarding |
 | `docs/security-and-tls.md` | TLS modes, auth, edge policy rules | Security reviews, edge behavior changes |
 | `docs/certificate-lifecycle.md` | Cert ingest, worker flows, incidents, replication | TLS automation and cert incidents |
 | `docs/billing-providers.md` | Stripe/Razorpay/PayPal flows + admin ops | Payment changes and finance operations |
@@ -69,6 +71,11 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - Dashboard JSON:
   - `infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`
 
+## Visual Assets
+
+- `docs/assets/platform-banner.svg`
+- `docs/assets/tunnel-flow.svg`
+
 ---
 
 ## Doc Maintenance Rules
@@ -88,3 +95,15 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - next queue priorities.
 
 If a doc and code diverge, update the doc immediately in the next commit.
+
+## Open-Source Community Files
+
+Repository community/maintainer files are in the project root:
+
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- `SECURITY.md`
+- `SUPPORT.md`
+- `GOVERNANCE.md`
+- `MAINTAINERS.md`
+- `CHANGELOG.md`

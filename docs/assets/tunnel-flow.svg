@@ -1,0 +1,58 @@
+<svg width="1280" height="370" viewBox="0 0 1280 370" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tunnel request flow diagram">
+  <defs>
+    <linearGradient id="bgFlow" x1="0" y1="0" x2="1280" y2="370" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="nodeA" x1="0" y1="0" x2="220" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16A34A"/>
+      <stop offset="1" stop-color="#15803D"/>
+    </linearGradient>
+    <linearGradient id="nodeB" x1="0" y1="0" x2="220" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="nodeC" x1="0" y1="0" x2="220" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+    <linearGradient id="nodeD" x1="0" y1="0" x2="220" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 8 3.5, 0 7" fill="#334155"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="370" fill="url(#bgFlow)"/>
+  <text x="48" y="56" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">
+    HTTP Request Tunnel Flow
+  </text>
+  <text x="48" y="88" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="400">
+    From public Internet request to local app response, with relay policy enforcement and agent forwarding.
+  </text>
+
+  <rect x="52" y="145" width="238" height="102" rx="16" fill="url(#nodeA)"/>
+  <text x="80" y="188" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">1. Public Client</text>
+  <text x="80" y="215" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="400">Requests public tunnel URL</text>
+
+  <rect x="356" y="145" width="238" height="102" rx="16" fill="url(#nodeB)"/>
+  <text x="384" y="184" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">2. Relay Edge</text>
+  <text x="384" y="211" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="400">Auth/IP/host/concurrency checks</text>
+
+  <rect x="660" y="145" width="238" height="102" rx="16" fill="url(#nodeC)"/>
+  <text x="688" y="184" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">3. Agent</text>
+  <text x="688" y="211" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="400">Active control tunnel session</text>
+
+  <rect x="964" y="145" width="238" height="102" rx="16" fill="url(#nodeD)"/>
+  <text x="992" y="184" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">4. Local Service</text>
+  <text x="992" y="211" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="400">App handles request and responds</text>
+
+  <line x1="290" y1="196" x2="346" y2="196" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="594" y1="196" x2="650" y2="196" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="898" y1="196" x2="954" y2="196" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <line x1="964" y1="283" x2="52" y2="283" stroke="#475569" stroke-width="2.5" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <text x="508" y="273" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Response path returns through agent and relay to client</text>
+</svg>
