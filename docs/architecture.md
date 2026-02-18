@@ -19,12 +19,14 @@
   - HTTP request forwarding,
   - raw TCP forwarding,
   - TLS termination and SNI-based passthrough routing,
-  - edge auth/IP policy enforcement.
+  - edge auth/IP policy enforcement,
+  - plan-bound per-tunnel concurrency backpressure (`429` on limit breach).
 
 ## Async Workers
 - `services/worker-billing`: Stripe/Razorpay/PayPal subscription sync to entitlements.
 - `services/worker-billing`: webhook event retention cleanup + failure health checks.
 - `services/worker-billing`: provider-scoped alert webhook delivery for webhook failure spikes.
+- `services/worker-billing`: billing SLO metrics endpoint + signed runbook replay triggers.
 - `services/worker-inspector`: replay queue processing and retention cleanup.
 - `services/worker-certificates`: custom-domain TLS probe loop and certificate lifecycle status sync.
 - `services/worker-certificates`: expiry/tls-error warning pipeline with optional alert-webhook delivery + cooldown.

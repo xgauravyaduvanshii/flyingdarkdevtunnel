@@ -119,6 +119,8 @@ type DunningCaseRow = {
   retry_count: number;
 };
 
+type DunningChannel = "webhook" | "email" | "slack";
+
 const razorpayWebhookSchema = z
   .object({
     event: z.string(),
@@ -845,12 +847,22 @@ async function listTaxRecordsForInvoices(app: FastifyInstance, invoiceIds: strin
   return taxes.rows;
 }
 
-function dunningDelaySecondsForStage(stage: number): number {
-  if (stage <= 1) return 15 * 60;
-  if (stage === 2) return 60 * 60;
-  if (stage === 3) return 6 * 60 * 60;
-  if (stage === 4) return 24 * 60 * 60;
-  return 48 * 60 * 60;
+function dunningDelaySecondsForStage(provider: CheckoutProvider, stage: number): number {
+  const profiles: Record<CheckoutProvider, number[]> = {
+    stripe: [15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60, 48 * 60 * 60],
+    razorpay: [30 * 60, 2 * 60 * 60, 8 * 60 * 60, 24 * 60 * 60, 48 * 60 * 60],
+    paypal: [30 * 60, 4 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60, 72 * 60 * 60],
+  };
+  const schedule = profiles[provider];
+  if (!schedule || schedule.length === 0) return 24 * 60 * 60;
+  const index = Math.max(0, Math.min(stage - 1, schedule.length - 1));
+  return schedule[index] ?? schedule[schedule.length - 1] ?? 24 * 60 * 60;
+}
+
+function defaultDunningChannels(provider: CheckoutProvider): DunningChannel[] {
+  if (provider === "razorpay") return ["webhook", "email"];
+  if (provider === "paypal") return ["email", "webhook"];
+  return ["webhook", "email"];
 }
 
 async function upsertDunningOpenCase(
@@ -878,8 +890,9 @@ async function upsertDunningOpenCase(
 
   const nextStage = Math.min((existing.rows[0]?.status === "open" ? existing.rows[0].stage + 1 : 1), 10);
   const retryCount = existing.rows[0] ? existing.rows[0].retry_count + 1 : 0;
-  const delaySeconds = dunningDelaySecondsForStage(nextStage);
+  const delaySeconds = dunningDelaySecondsForStage(input.provider, nextStage);
   const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000);
+  const channels = defaultDunningChannels(input.provider);
 
   await app.db.query(
     `
@@ -893,12 +906,13 @@ async function upsertDunningOpenCase(
         retry_count,
         next_attempt_at,
         last_attempt_at,
+        notification_channels,
         latest_event_id,
         latest_event_type,
         payload_json,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), $8, $9, $10, NOW())
+      VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), $8, $9, $10, $11, NOW())
       ON CONFLICT (org_id, provider, subscription_ref) DO UPDATE
       SET
         status = 'open',
@@ -906,6 +920,7 @@ async function upsertDunningOpenCase(
         retry_count = EXCLUDED.retry_count,
         next_attempt_at = EXCLUDED.next_attempt_at,
         last_attempt_at = NOW(),
+        notification_channels = EXCLUDED.notification_channels,
         latest_event_id = COALESCE(EXCLUDED.latest_event_id, billing_dunning_cases.latest_event_id),
         latest_event_type = EXCLUDED.latest_event_type,
         payload_json = COALESCE(EXCLUDED.payload_json, billing_dunning_cases.payload_json),
@@ -919,6 +934,7 @@ async function upsertDunningOpenCase(
       nextStage,
       retryCount,
       nextAttemptAt,
+      channels,
       input.eventId ?? null,
       input.eventType,
       input.payload ?? null,

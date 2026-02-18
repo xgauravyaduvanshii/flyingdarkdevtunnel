@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import { FastifyPluginAsync } from "fastify";
 import { v4 as uuidv4 } from "uuid";
@@ -14,6 +15,8 @@ const certEventTypeSchema = z.enum([
   "renewal_failed",
   "certificate_expiring",
 ]);
+
+type CertSourceKeyMap = Map<string, string>;
 
 function normalizeDomain(input: string): string {
   return input.trim().toLowerCase().replace(/\.+$/, "");
@@ -38,8 +41,98 @@ async function verifyDnsTxt(domain: string, expectedToken: string): Promise<bool
   return flattened.includes(expectedToken);
 }
 
+function certSourceKey(source: string, clusterId: string): string {
+  return `${source.trim().toLowerCase()}::${clusterId.trim().toLowerCase()}`;
+}
+
+function parseCertSourceKeys(raw: string | undefined): CertSourceKeyMap {
+  const map: CertSourceKeyMap = new Map();
+  if (!raw) return map;
+
+  for (const item of raw.split(",")) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const [subject, secret] = trimmed.split("=", 2);
+    if (!subject || !secret) continue;
+
+    const [source, clusterId] = subject.split(":", 2).map((part) => part?.trim().toLowerCase() ?? "");
+    if (!source || !clusterId || !secret.trim()) continue;
+    map.set(certSourceKey(source, clusterId), secret.trim());
+  }
+
+  return map;
+}
+
+function headerValue(value: string | string[] | undefined): string | null {
+  if (!value) return null;
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value;
+}
+
+function getRawBody(request: { rawBody?: string | Buffer; body?: unknown }): string {
+  const raw = request.rawBody;
+  if (typeof raw === "string") return raw;
+  if (raw && Buffer.isBuffer(raw)) return raw.toString("utf8");
+  return JSON.stringify(request.body ?? {});
+}
+
+function safeHexCompare(a: string, b: string): boolean {
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  if (left.length !== right.length || left.length === 0) {
+    return false;
+  }
+  return crypto.timingSafeEqual(left, right);
+}
+
 export const domainRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/cert-events", async (request, reply) => {
+  const sourceKeys = parseCertSourceKeys(app.env.CERT_EVENT_SOURCE_KEYS);
+  const provenanceRequired = app.env.CERT_EVENT_REQUIRE_PROVENANCE || sourceKeys.size > 0;
+
+  async function recordCertSourceActivity(input: {
+    source: string;
+    clusterId: string;
+    eventId: string | null;
+    eventType: string | null;
+    status: "accepted" | "signature_failed";
+    signatureFailed?: boolean;
+  }): Promise<void> {
+    await app.db.query(
+      `
+        INSERT INTO cert_event_source_activity (
+          source,
+          cluster_id,
+          last_event_id,
+          last_event_type,
+          last_status,
+          events_total,
+          signature_failures,
+          last_seen_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, 1, $6, NOW(), NOW())
+        ON CONFLICT (source, cluster_id) DO UPDATE
+        SET
+          last_event_id = COALESCE(EXCLUDED.last_event_id, cert_event_source_activity.last_event_id),
+          last_event_type = COALESCE(EXCLUDED.last_event_type, cert_event_source_activity.last_event_type),
+          last_status = EXCLUDED.last_status,
+          events_total = cert_event_source_activity.events_total + 1,
+          signature_failures = cert_event_source_activity.signature_failures + EXCLUDED.signature_failures,
+          last_seen_at = NOW(),
+          updated_at = NOW()
+      `,
+      [
+        input.source.trim().toLowerCase(),
+        input.clusterId.trim().toLowerCase(),
+        input.eventId,
+        input.eventType,
+        input.status,
+        input.signatureFailed ? 1 : 0,
+      ],
+    );
+  }
+
+  app.post("/cert-events", { config: { rawBody: true } }, async (request, reply) => {
     if (!app.env.CERT_EVENT_INGEST_TOKEN) {
       return reply.code(503).send({ message: "Certificate event ingest token is not configured" });
     }
@@ -53,6 +146,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         source: z.string().min(2).max(80).optional().default("cert_manager"),
+        clusterId: z.string().min(2).max(120).optional(),
         sourceEventId: z.string().min(3).max(200).optional(),
         domainId: z.string().uuid().optional(),
         domain: z.string().min(3).optional(),
@@ -64,6 +158,81 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         payload: z.record(z.unknown()).optional(),
       })
       .parse(request.body ?? {});
+
+    const source = body.source.trim().toLowerCase();
+    const clusterId = body.clusterId?.trim().toLowerCase() ?? "";
+    const rawBody = getRawBody(request);
+    let provenanceVerified = false;
+    let provenanceSubject: string | null = null;
+
+    if (provenanceRequired) {
+      const sourceHeader = headerValue(request.headers["x-cert-source"])?.trim().toLowerCase() ?? source;
+      const clusterHeader = headerValue(request.headers["x-cert-cluster"])?.trim().toLowerCase() ?? clusterId;
+      const timestampRaw = headerValue(request.headers["x-cert-timestamp"]);
+      const signature = headerValue(request.headers["x-cert-signature"])?.trim().toLowerCase() ?? "";
+      const signingSecret = sourceKeys.get(certSourceKey(sourceHeader, clusterHeader));
+
+      if (!signingSecret) {
+        await recordCertSourceActivity({
+          source: sourceHeader || source,
+          clusterId: clusterHeader || "unknown",
+          eventId: body.sourceEventId ?? null,
+          eventType: body.eventType,
+          status: "signature_failed",
+          signatureFailed: true,
+        });
+        return reply.code(401).send({ message: "Unknown certificate source/cluster identity" });
+      }
+
+      const eventTs = timestampRaw ? Number.parseInt(timestampRaw, 10) : Number.NaN;
+      if (!Number.isFinite(eventTs)) {
+        await recordCertSourceActivity({
+          source: sourceHeader,
+          clusterId: clusterHeader,
+          eventId: body.sourceEventId ?? null,
+          eventType: body.eventType,
+          status: "signature_failed",
+          signatureFailed: true,
+        });
+        return reply.code(401).send({ message: "Invalid certificate timestamp" });
+      }
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (Math.abs(nowSeconds - eventTs) > app.env.CERT_EVENT_MAX_AGE_SECONDS) {
+        await recordCertSourceActivity({
+          source: sourceHeader,
+          clusterId: clusterHeader,
+          eventId: body.sourceEventId ?? null,
+          eventType: body.eventType,
+          status: "signature_failed",
+          signatureFailed: true,
+        });
+        return reply.code(401).send({ message: "Certificate signature timestamp expired" });
+      }
+
+      const expected = crypto.createHmac("sha256", signingSecret).update(`${timestampRaw}.${rawBody}`).digest("hex");
+      if (!signature || !safeHexCompare(expected, signature)) {
+        await recordCertSourceActivity({
+          source: sourceHeader,
+          clusterId: clusterHeader,
+          eventId: body.sourceEventId ?? null,
+          eventType: body.eventType,
+          status: "signature_failed",
+          signatureFailed: true,
+        });
+        return reply.code(401).send({ message: "Invalid certificate signature" });
+      }
+
+      if (body.source && sourceHeader !== source) {
+        return reply.code(400).send({ message: "x-cert-source header does not match source body field" });
+      }
+      if (body.clusterId && clusterHeader !== clusterId) {
+        return reply.code(400).send({ message: "x-cert-cluster header does not match clusterId body field" });
+      }
+
+      provenanceVerified = true;
+      provenanceSubject = `${sourceHeader}:${clusterHeader}`;
+    }
 
     let domainId: string | null = body.domainId ?? null;
     let domain = body.domain ? normalizeDomain(body.domain) : "";
@@ -99,7 +268,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           ORDER BY created_at DESC
           LIMIT 1
         `,
-        [body.source, body.sourceEventId],
+        [source, body.sourceEventId],
       );
 
       if (existing.rowCount && existing.rows[0]) {
@@ -117,6 +286,9 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               renewal_due_at = COALESCE($7, renewal_due_at),
               reason = COALESCE($8, reason),
               payload_json = COALESCE($9, payload_json),
+              cluster_id = COALESCE($10, cluster_id),
+              provenance_subject = COALESCE($11, provenance_subject),
+              provenance_verified = COALESCE($12, provenance_verified),
               last_error = NULL,
               retry_count = 0,
               next_retry_at = NULL,
@@ -124,7 +296,20 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               updated_at = NOW()
             WHERE id = $1
           `,
-          [eventId, domainId, domain, body.eventType, body.certificateRef ?? null, body.notAfter ?? null, body.renewalDueAt ?? null, body.reason ?? null, body.payload ?? null],
+          [
+            eventId,
+            domainId,
+            domain,
+            body.eventType,
+            body.certificateRef ?? null,
+            body.notAfter ?? null,
+            body.renewalDueAt ?? null,
+            body.reason ?? null,
+            body.payload ?? null,
+            body.clusterId ?? null,
+            provenanceSubject,
+            provenanceRequired ? provenanceVerified : null,
+          ],
         );
       } else {
         await app.db.query(
@@ -133,6 +318,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               id,
               source,
               source_event_id,
+              cluster_id,
               domain_id,
               domain,
               event_type,
@@ -142,17 +328,20 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
               renewal_due_at,
               reason,
               payload_json,
+              provenance_subject,
+              provenance_verified,
               retry_count,
               next_retry_at,
               last_error,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, 0, NULL, NULL, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13, 0, NULL, NULL, NOW())
           `,
           [
             eventId,
-            body.source,
+            source,
             body.sourceEventId,
+            body.clusterId ?? null,
             domainId,
             domain,
             body.eventType,
@@ -161,6 +350,8 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             body.renewalDueAt ?? null,
             body.reason ?? null,
             body.payload ?? null,
+            provenanceSubject,
+            provenanceVerified,
           ],
         );
       }
@@ -171,6 +362,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             id,
             source,
             source_event_id,
+            cluster_id,
             domain_id,
             domain,
             event_type,
@@ -179,13 +371,16 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
             not_after,
             renewal_due_at,
             reason,
-            payload_json
+            payload_json,
+            provenance_subject,
+            provenance_verified
           )
-          VALUES ($1, $2, NULL, $3, $4, $5, 'pending', $6, $7, $8, $9, $10)
+          VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11, $12)
         `,
         [
           eventId,
-          body.source,
+          source,
+          body.clusterId ?? null,
           domainId,
           domain,
           body.eventType,
@@ -194,11 +389,31 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
           body.renewalDueAt ?? null,
           body.reason ?? null,
           body.payload ?? null,
+          provenanceSubject,
+          provenanceVerified,
         ],
       );
     }
 
-    return reply.code(202).send({ ok: true, eventId, status: "pending" });
+    if (provenanceVerified && body.clusterId) {
+      await recordCertSourceActivity({
+        source,
+        clusterId: body.clusterId,
+        eventId: body.sourceEventId ?? eventId,
+        eventType: body.eventType,
+        status: "accepted",
+      });
+    }
+
+    return reply.code(202).send({
+      ok: true,
+      eventId,
+      status: "pending",
+      source,
+      clusterId: body.clusterId ?? null,
+      provenanceVerified,
+      provenanceSubject,
+    });
   });
 
   app.addHook("preHandler", async (request, reply) => {
@@ -478,6 +693,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         id,
         source,
         source_event_id,
+        cluster_id,
         domain_id,
         domain,
         event_type,
@@ -489,6 +705,8 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
         retry_count,
         next_retry_at,
         last_error,
+        provenance_subject,
+        provenance_verified,
         created_at,
         updated_at,
         processed_at

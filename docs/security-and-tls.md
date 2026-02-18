@@ -5,6 +5,7 @@
 - Relay enforces tunnel-level Basic Auth when configured.
 - Relay enforces IP allowlist/CIDR restrictions for inbound requests.
 - Passthrough hosts are blocked from HTTP termination path (`426`).
+- Relay enforces plan-bound concurrency limits from agent token claims and applies backpressure (`429`).
 
 ## TLS modes
 1. Termination
@@ -47,6 +48,7 @@
 
 ## Token and abuse hardening
 - JWT access/refresh/agent tokens are issued with `jti`.
+- Agent tokens include `maxConcurrentConns` for relay-side concurrency enforcement.
 - Revocation list (`auth_revoked_tokens`) is enforced at auth middleware.
 - Token revoke endpoint:
   - `POST /v1/auth/token/revoke`

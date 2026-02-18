@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import dotenv from "dotenv";
 import http from "node:http";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Pool } from "pg";
 import Stripe from "stripe";
 import { z } from "zod";
@@ -27,12 +28,29 @@ const envSchema = z.object({
   BILLING_RUNBOOK_REPLAY_LIMIT: z.coerce.number().int().positive().default(50),
   BILLING_RUNBOOK_REPLAY_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(300),
   BILLING_DUNNING_MAX_STAGE: z.coerce.number().int().positive().default(6),
+  BILLING_DUNNING_SCHEDULE_STRIPE: z.string().optional().default("900,3600,21600,86400,172800"),
+  BILLING_DUNNING_SCHEDULE_RAZORPAY: z.string().optional().default("1800,7200,28800,86400,172800"),
+  BILLING_DUNNING_SCHEDULE_PAYPAL: z.string().optional().default("1800,14400,43200,86400,259200"),
   BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL: z.string().url().optional(),
   BILLING_DUNNING_NOTIFICATION_SECRET: z.string().optional(),
+  BILLING_DUNNING_EMAIL_WEBHOOK_URL: z.string().url().optional(),
+  BILLING_DUNNING_SLACK_WEBHOOK_URL: z.string().url().optional(),
   BILLING_REPORT_EXPORT_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(12),
   BILLING_REPORT_DEFAULT_SINK_URL: z.string().url().optional(),
+  BILLING_REPORT_WAREHOUSE_SINK_URL: z.string().url().optional(),
   BILLING_REPORT_SIGNING_SECRET: z.string().optional(),
+  BILLING_REPORT_S3_BUCKET: z.string().optional(),
+  BILLING_REPORT_S3_REGION: z.string().optional().default("us-east-1"),
+  BILLING_REPORT_S3_ENDPOINT: z.string().url().optional(),
+  BILLING_REPORT_S3_ACCESS_KEY: z.string().optional(),
+  BILLING_REPORT_S3_SECRET_KEY: z.string().optional(),
+  BILLING_REPORT_S3_FORCE_PATH_STYLE: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value.trim().toLowerCase() === "true"),
+  BILLING_REPORT_S3_KEY_PREFIX: z.string().optional().default("billing-exports/"),
 });
 
 const env = envSchema.parse(process.env);
@@ -46,8 +64,10 @@ const lastAlertAtByProvider: Partial<Record<"stripe" | "razorpay" | "paypal", nu
 const lastRunbookReplayAtByKey = new Map<string, number>();
 let runbookReplayTriggerTotal = 0;
 let runbookReplayTriggerFailureTotal = 0;
+let s3Client: S3Client | null = null;
 
 type BillingProvider = "stripe" | "razorpay" | "paypal";
+type DunningChannel = "webhook" | "email" | "slack";
 type WebhookHealthSummary = {
   failed1h: number;
   failed24h: number;
@@ -58,6 +78,11 @@ type WebhookHealthSummary = {
 };
 
 const BILLING_PROVIDERS: BillingProvider[] = ["stripe", "razorpay", "paypal"];
+const dunningSchedules: Record<BillingProvider, number[]> = {
+  stripe: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_STRIPE, [15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60, 48 * 60 * 60]),
+  razorpay: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_RAZORPAY, [30 * 60, 2 * 60 * 60, 8 * 60 * 60, 24 * 60 * 60, 48 * 60 * 60]),
+  paypal: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_PAYPAL, [30 * 60, 4 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60, 72 * 60 * 60]),
+};
 let webhookMetricsGeneratedAt = Date.now();
 let webhookHealthByProvider: Record<BillingProvider, WebhookHealthSummary> = {
   stripe: { failed1h: 0, failed24h: 0, stalePending: 0, p95LatencySeconds: 0, processed1h: 0, sloViolationCount1h: 0 },
@@ -98,6 +123,48 @@ function toCsv(headers: string[], rows: Array<Record<string, unknown>>): string 
 
 function hmacSignature(secret: string, timestamp: string, payload: string): string {
   return crypto.createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
+}
+
+function parseDunningSchedule(raw: string, fallback: number[]): number[] {
+  const parsed = raw
+    .split(",")
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+function parseNotificationChannels(input: unknown): DunningChannel[] {
+  if (!Array.isArray(input)) {
+    return ["webhook"];
+  }
+  const channels = input
+    .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : ""))
+    .filter((value): value is DunningChannel => value === "webhook" || value === "email" || value === "slack");
+  return channels.length > 0 ? Array.from(new Set(channels)) : ["webhook"];
+}
+
+function dunningDelaySeconds(provider: BillingProvider, stage: number): number {
+  const schedule = dunningSchedules[provider];
+  const index = Math.max(0, Math.min(stage - 1, schedule.length - 1));
+  return schedule[index] ?? schedule[schedule.length - 1] ?? 24 * 60 * 60;
+}
+
+function getS3Client(): S3Client {
+  if (s3Client) return s3Client;
+  if (!env.BILLING_REPORT_S3_BUCKET || !env.BILLING_REPORT_S3_ACCESS_KEY || !env.BILLING_REPORT_S3_SECRET_KEY) {
+    throw new Error("S3 export destination requires BILLING_REPORT_S3_BUCKET and S3 credentials");
+  }
+
+  s3Client = new S3Client({
+    region: env.BILLING_REPORT_S3_REGION,
+    endpoint: env.BILLING_REPORT_S3_ENDPOINT,
+    forcePathStyle: env.BILLING_REPORT_S3_FORCE_PATH_STYLE,
+    credentials: {
+      accessKeyId: env.BILLING_REPORT_S3_ACCESS_KEY,
+      secretAccessKey: env.BILLING_REPORT_S3_SECRET_KEY,
+    },
+  });
+  return s3Client;
 }
 
 function quantile(values: number[], q: number): number {

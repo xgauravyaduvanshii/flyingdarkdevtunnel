@@ -3,6 +3,7 @@ import { FastifyPluginAsync } from "fastify";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { computeAuditEntryHash } from "../lib/audit-chain.js";
+import { pickRelayEdgeForRegion } from "../lib/edges.js";
 import { randomToken } from "../lib/utils.js";
 import { reconcileFailedWebhookEvents, replayWebhookEventById } from "./billing.js";
 
@@ -40,6 +41,167 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     );
 
     return { users: users.rows };
+  });
+
+  app.get("/relay-edges", async (request) => {
+    const query = z
+      .object({
+        region: z.string().min(2).max(20).optional(),
+        status: z.enum(["online", "degraded", "offline"]).optional(),
+        staleSeconds: z.coerce.number().int().positive().max(3600).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const staleSeconds = query.staleSeconds ?? app.env.RELAY_HEARTBEAT_MAX_AGE_SECONDS;
+
+    const edges = await app.db.query(
+      `
+      SELECT
+        id,
+        edge_id,
+        region,
+        status,
+        capacity,
+        in_flight,
+        rejected_overlimit,
+        metadata_json,
+        last_heartbeat_at,
+        created_at,
+        updated_at
+      FROM relay_edges
+      WHERE ($1::text IS NULL OR region = LOWER($1))
+        AND ($2::text IS NULL OR status = $2)
+      ORDER BY
+        CASE WHEN last_heartbeat_at >= NOW() - make_interval(secs => $3::int) THEN 0 ELSE 1 END,
+        region ASC,
+        last_heartbeat_at DESC
+      LIMIT $4
+    `,
+      [query.region ?? null, query.status ?? null, staleSeconds, query.limit],
+    );
+
+    let recommendedEdge: string | null = null;
+    if (query.region) {
+      recommendedEdge = await pickRelayEdgeForRegion(app, query.region);
+    }
+
+    return {
+      edges: edges.rows,
+      recommendedEdge,
+      staleSeconds,
+    };
+  });
+
+  app.get("/cert-sources", async (request) => {
+    const query = z
+      .object({
+        source: z.string().min(2).max(80).optional(),
+        clusterId: z.string().min(2).max(120).optional(),
+        status: z.enum(["accepted", "signature_failed"]).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const rows = await app.db.query(
+      `
+      SELECT
+        source,
+        cluster_id,
+        last_event_id,
+        last_event_type,
+        last_status,
+        events_total,
+        signature_failures,
+        last_seen_at,
+        updated_at
+      FROM cert_event_source_activity
+      WHERE ($1::text IS NULL OR source = LOWER($1))
+        AND ($2::text IS NULL OR cluster_id = LOWER($2))
+        AND ($3::text IS NULL OR last_status = $3)
+      ORDER BY last_seen_at DESC
+      LIMIT $4
+    `,
+      [query.source ?? null, query.clusterId ?? null, query.status ?? null, query.limit],
+    );
+
+    return { sources: rows.rows };
+  });
+
+  app.get("/security-anomalies", async (request) => {
+    const query = z
+      .object({
+        category: z.enum(["auth_failed", "rate_limited", "token_revoked", "abuse_signal"]).optional(),
+        severity: z.enum(["low", "medium", "high"]).optional(),
+        ip: z.string().optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const events = await app.db.query(
+      `
+      SELECT id, category, severity, ip, user_id, org_id, route, details, created_at
+      FROM security_anomaly_events
+      WHERE ($1::text IS NULL OR category = $1)
+        AND ($2::text IS NULL OR severity = $2)
+        AND ($3::text IS NULL OR ip = $3)
+        AND ($4::uuid IS NULL OR org_id = $4)
+      ORDER BY created_at DESC
+      LIMIT $5
+    `,
+      [query.category ?? null, query.severity ?? null, query.ip ?? null, query.orgId ?? null, query.limit],
+    );
+
+    return { anomalies: events.rows };
+  });
+
+  app.get("/revoked-tokens", async (request) => {
+    const query = z
+      .object({
+        tokenType: z.enum(["access", "refresh", "agent"]).optional(),
+        userId: z.string().uuid().optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const rows = await app.db.query(
+      `
+      SELECT id, jti, token_type, user_id, org_id, expires_at, reason, created_at
+      FROM auth_revoked_tokens
+      WHERE ($1::text IS NULL OR token_type = $1)
+        AND ($2::uuid IS NULL OR user_id = $2)
+        AND ($3::uuid IS NULL OR org_id = $3)
+      ORDER BY created_at DESC
+      LIMIT $4
+    `,
+      [query.tokenType ?? null, query.userId ?? null, query.orgId ?? null, query.limit],
+    );
+
+    return { tokens: rows.rows };
+  });
+
+  app.post("/revoked-tokens/prune", async (request) => {
+    const body = z
+      .object({
+        before: z.coerce.date().optional(),
+      })
+      .parse(request.body ?? {});
+
+    const before = body.before ?? new Date();
+    const result = await app.db.query(`DELETE FROM auth_revoked_tokens WHERE expires_at IS NOT NULL AND expires_at < $1`, [before]);
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.revoked_tokens.prune",
+      entityType: "auth_revoked_tokens",
+      entityId: "bulk",
+      metadata: { before: before.toISOString(), deleted: result.rowCount ?? 0 },
+    });
+
+    return { ok: true, deleted: result.rowCount ?? 0, before: before.toISOString() };
   });
 
   app.get("/members", async (request) => {
@@ -673,7 +835,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         dataset: z.enum(["finance_events", "invoices", "dunning"]),
-        destination: z.enum(["inline", "webhook"]).optional().default("inline"),
+        destination: z.enum(["inline", "webhook", "s3", "warehouse"]).optional().default("inline"),
         sinkUrl: z.string().url().optional(),
         orgId: z.string().uuid().optional(),
         scheduledFor: z.coerce.date().optional(),
@@ -681,8 +843,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(request.body ?? {});
 
-    if (body.destination === "webhook" && !body.sinkUrl) {
-      return reply.code(400).send({ message: "sinkUrl is required for webhook destination" });
+    if ((body.destination === "webhook" || body.destination === "warehouse") && !body.sinkUrl) {
+      return reply.code(400).send({ message: "sinkUrl is required for webhook and warehouse destinations" });
     }
 
     const id = uuidv4();

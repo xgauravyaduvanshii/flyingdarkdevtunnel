@@ -37,6 +37,18 @@
   - passthrough host-mode enforcement,
   - admin domain inventory visibility and TLS-mode mapping.
 
+## Relay resilience and backpressure test
+- Script: `scripts/relay-resilience.sh` (root alias: `pnpm test:resilience`)
+- Scope:
+  - baseline relay throughput on a delayed upstream,
+  - backpressure validation (expects `429` when tunnel concurrency exceeds plan-bound limits),
+  - reconnect-storm simulation (agent restart cycles while requests remain in-flight).
+- Output:
+  - JSON reports in `.data/resilience-logs/`:
+    - `baseline.json`
+    - `backpressure.json`
+    - `storm.json`
+
 ## CI workflow
 - File: `.github/workflows/ci.yml`
 - Jobs:
