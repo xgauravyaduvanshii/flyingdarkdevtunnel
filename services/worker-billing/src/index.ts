@@ -16,6 +16,8 @@ const envSchema = z.object({
   BILLING_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
   BILLING_WEBHOOK_EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD: z.coerce.number().int().positive().default(10),
+  BILLING_ALERT_WEBHOOK_URL: z.string().url().optional(),
+  BILLING_ALERT_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(600),
 });
 
 const env = envSchema.parse(process.env);
@@ -25,6 +27,7 @@ const razorpayEnabled = Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
 const paypalEnabled = Boolean(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET);
 let paypalTokenCache: { token: string; expiresAt: number } | null = null;
 let loggedProviderState = false;
+const lastAlertAtByProvider: Partial<Record<"stripe" | "razorpay" | "paypal", number>> = {};
 
 function paypalBaseUrl(environment: "sandbox" | "live"): string {
   return environment === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
@@ -281,32 +284,63 @@ async function cleanupWebhookEvents(): Promise<void> {
 
 async function reportWebhookHealth(): Promise<void> {
   const stats = await db.query<{
+    provider: "stripe" | "razorpay" | "paypal";
     failed_1h: string;
     failed_24h: string;
     stale_pending: string;
   }>(
     `
       SELECT
+        provider,
         COUNT(*) FILTER (WHERE status = 'failed' AND received_at > NOW() - INTERVAL '1 hour')::text AS failed_1h,
         COUNT(*) FILTER (WHERE status = 'failed' AND received_at > NOW() - INTERVAL '24 hours')::text AS failed_24h,
         COUNT(*) FILTER (WHERE status = 'pending' AND received_at < NOW() - INTERVAL '5 minutes')::text AS stale_pending
       FROM billing_webhook_events
+      GROUP BY provider
     `,
   );
 
-  const row = stats.rows[0];
-  if (!row) {
-    return;
-  }
+  for (const row of stats.rows) {
+    const failed1h = Number.parseInt(row.failed_1h, 10) || 0;
+    const failed24h = Number.parseInt(row.failed_24h, 10) || 0;
+    const stalePending = Number.parseInt(row.stale_pending, 10) || 0;
 
-  const failed1h = Number.parseInt(row.failed_1h, 10) || 0;
-  const failed24h = Number.parseInt(row.failed_24h, 10) || 0;
-  const stalePending = Number.parseInt(row.stale_pending, 10) || 0;
+    if (failed1h < env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD && stalePending === 0) {
+      continue;
+    }
 
-  if (failed1h >= env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD || stalePending > 0) {
-    console.warn(
-      `[worker-billing] webhook health warning: failed_1h=${failed1h}, failed_24h=${failed24h}, stale_pending=${stalePending}`,
-    );
+    const alertMessage = `[worker-billing] webhook health warning provider=${row.provider} failed_1h=${failed1h} failed_24h=${failed24h} stale_pending=${stalePending}`;
+    console.warn(alertMessage);
+
+    if (!env.BILLING_ALERT_WEBHOOK_URL) {
+      continue;
+    }
+
+    const now = Date.now();
+    const last = lastAlertAtByProvider[row.provider] ?? 0;
+    if (now - last < env.BILLING_ALERT_COOLDOWN_SECONDS * 1000) {
+      continue;
+    }
+
+    try {
+      await fetch(env.BILLING_ALERT_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: "worker-billing",
+          severity: "warning",
+          provider: row.provider,
+          failed1h,
+          failed24h,
+          stalePending,
+          threshold: env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      lastAlertAtByProvider[row.provider] = now;
+    } catch (error) {
+      console.error("[worker-billing] alert webhook delivery failed", error);
+    }
   }
 }
 

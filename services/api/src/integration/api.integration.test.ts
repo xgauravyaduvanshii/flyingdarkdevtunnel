@@ -283,5 +283,87 @@ describe("api integration", () => {
     };
     expect(adminWebhookBody.events.some((row) => row.event_id === eventId && row.provider === "razorpay")).toBe(true);
     expect(Number.parseInt(adminWebhookBody.stats.processed, 10)).toBeGreaterThan(0);
+
+    const replayTargetId = randomUUID();
+    const replayEventId = `evt_replay_${randomUUID().replace(/-/g, "")}`;
+    await app.db.query(
+      `
+        INSERT INTO billing_webhook_events
+          (id, provider, event_id, provider_event_type, payload_hash, payload_json, status, attempts, replay_count)
+        VALUES
+          ($1, 'razorpay', $2, 'subscription.activated', $3, $4::jsonb, 'failed', 1, 0)
+      `,
+      [
+        replayTargetId,
+        replayEventId,
+        `hash_${randomUUID().replace(/-/g, "")}`,
+        JSON.stringify({
+          event: "subscription.activated",
+          payload: {
+            subscription: {
+              entity: {
+                id: `sub_replay_${randomUUID().replace(/-/g, "")}`,
+                plan_id: razorpayPlanId,
+                status: "active",
+                customer_id: "cust_replay",
+                notes: { orgId },
+              },
+            },
+          },
+        }),
+      ],
+    );
+
+    const replayRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/billing-webhooks/${replayTargetId}/replay`,
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: {},
+    });
+    expect(replayRes.statusCode).toBe(200);
+    const replayBody = replayRes.json() as { ok: boolean; result: { status: string } };
+    expect(replayBody.ok).toBe(true);
+    expect(replayBody.result.status).toBe("processed");
+
+    const reconcileTargetId = randomUUID();
+    await app.db.query(
+      `
+        INSERT INTO billing_webhook_events
+          (id, provider, event_id, provider_event_type, payload_hash, payload_json, status, attempts, replay_count)
+        VALUES
+          ($1, 'razorpay', $2, 'subscription.activated', $3, $4::jsonb, 'failed', 1, 0)
+      `,
+      [
+        reconcileTargetId,
+        `evt_reconcile_${randomUUID().replace(/-/g, "")}`,
+        `hash_${randomUUID().replace(/-/g, "")}`,
+        JSON.stringify({
+          event: "subscription.activated",
+          payload: {
+            subscription: {
+              entity: {
+                id: `sub_reconcile_${randomUUID().replace(/-/g, "")}`,
+                plan_id: razorpayPlanId,
+                status: "active",
+                customer_id: "cust_reconcile",
+                notes: { orgId },
+              },
+            },
+          },
+        }),
+      ],
+    );
+
+    const reconcileRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/billing-webhooks/reconcile",
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: { provider: "razorpay", limit: 20 },
+    });
+    expect(reconcileRes.statusCode).toBe(200);
+    const reconcileBody = reconcileRes.json() as { ok: boolean; attempted: number; processed: number };
+    expect(reconcileBody.ok).toBe(true);
+    expect(reconcileBody.attempted).toBeGreaterThan(0);
+    expect(reconcileBody.processed).toBeGreaterThan(0);
   }, 30_000);
 });
