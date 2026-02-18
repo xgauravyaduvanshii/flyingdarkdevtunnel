@@ -17,6 +17,12 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Payment finance-ops hardening:
+  - Added user billing APIs for subscription state, cancel, refund, and finance-event history.
+  - Added provider-aware cancel/refund execution with safe mock fallbacks in local/dev.
+  - Added persistent `billing_finance_events` ledger + migration for audit-grade finance ops history.
+  - Added admin finance events visibility endpoint + admin console page.
+  - Added integration coverage for cancel/refund + finance-event visibility paths.
 - Certificate alerting hardening:
   - Added certificate expiry threshold controls to `worker-certificates`.
   - Added TLS error/expiry warning emission with per-domain cooldown logic.
@@ -78,6 +84,7 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Payment production hardening:
   - Add signed runbook triggers to replay by provider/event class automatically.
   - Add dashboard SLOs and paging policies for webhook processing latency.
+  - Extend dunning workflows with notification orchestration and retry policy tuning.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
@@ -85,7 +92,7 @@ Phase 1 (MVP hardening + production readiness improvements)
    - Add retry/backoff semantics and domain-level failure policy.
 2. Payment hardening + finance ops:
    - Invoice/tax records, failed-payment recovery, and dunning workflows.
-   - Refund/cancel flows with audit trails.
+   - Expand refund/cancel from API baseline to finance reporting exports.
 3. Multi-region edge foundations:
    - Region-aware relay registration and host assignment.
 4. Enterprise controls:

@@ -17,6 +17,20 @@ Control-plane billing now supports three checkout providers:
 
 If provider credentials or mapped plan IDs are missing, the API returns a mock checkout URL.
 
+## Finance operations
+- Subscription state:
+  - `GET /v1/billing/subscription`
+- Cancel flow:
+  - `POST /v1/billing/subscription/cancel`
+  - body: `atPeriodEnd` (default `true`), `reason` (optional)
+  - updates local subscription state and writes `billing_finance_events`.
+- Refund flow:
+  - `POST /v1/billing/refund`
+  - body: `paymentId`, `amountCents` (optional), `currency` (optional), `reason` (optional)
+  - uses provider APIs when keys are present, otherwise safe mock mode.
+- User finance history:
+  - `GET /v1/billing/finance-events`
+
 ## Webhooks
 - Stripe: `POST /v1/billing/webhook/stripe` (legacy alias: `POST /v1/billing/webhook`)
 - Razorpay: `POST /v1/billing/webhook/razorpay`
@@ -51,6 +65,10 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - `stripe_subscription_id`
   - `razorpay_subscription_id`
   - `paypal_subscription_id`
+- `billing_finance_events`:
+  - finance op trail (`subscription_cancel`, `refund`, `payment_failed`, `payment_recovered`)
+  - provider status (`processed`, `failed`, `mocked`)
+  - external references, amount/currency, payload/result snapshots
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
@@ -69,8 +87,10 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - `GET /v1/admin/billing-webhooks?provider=&status=&limit=`
   - `POST /v1/admin/billing-webhooks/:id/replay`
   - `POST /v1/admin/billing-webhooks/reconcile`
+  - `GET /v1/admin/billing-finance-events?provider=&type=&status=&orgId=&limit=`
 - Admin UI:
   - `apps/console-web/app/admin/billing-webhooks/page.tsx`
+  - `apps/console-web/app/admin/billing-finance-events/page.tsx`
 
 ## Replay and reconciliation
 - Failed webhook events can be replayed from stored payloads.

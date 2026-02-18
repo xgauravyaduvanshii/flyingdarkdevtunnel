@@ -54,6 +54,21 @@ type ReplayResult = {
   message?: string;
 };
 
+type FinanceEventType = "subscription_cancel" | "refund" | "payment_failed" | "payment_recovered";
+type FinanceEventStatus = "pending" | "processed" | "failed" | "mocked";
+
+type SubscriptionRow = {
+  org_id: string;
+  billing_provider: CheckoutProvider;
+  status: string;
+  plan_id: string | null;
+  plan_code: string | null;
+  plan_name: string | null;
+  stripe_subscription_id: string | null;
+  razorpay_subscription_id: string | null;
+  paypal_subscription_id: string | null;
+};
+
 const razorpayWebhookSchema = z
   .object({
     event: z.string(),
@@ -313,6 +328,91 @@ async function setFreePlan(app: FastifyInstance, orgId: string, provider: Checko
   }
 }
 
+function subscriptionIdForProvider(input: SubscriptionRow): string | null {
+  if (input.billing_provider === "stripe") return input.stripe_subscription_id;
+  if (input.billing_provider === "razorpay") return input.razorpay_subscription_id;
+  return input.paypal_subscription_id;
+}
+
+async function getOrgSubscription(app: FastifyInstance, orgId: string): Promise<SubscriptionRow | null> {
+  const result = await app.db.query<SubscriptionRow>(
+    `
+      SELECT
+        s.org_id,
+        s.billing_provider,
+        s.status,
+        s.plan_id,
+        p.code AS plan_code,
+        p.name AS plan_name,
+        s.stripe_subscription_id,
+        s.razorpay_subscription_id,
+        s.paypal_subscription_id
+      FROM subscriptions s
+      LEFT JOIN plans p ON p.id = s.plan_id
+      WHERE s.org_id = $1
+      LIMIT 1
+    `,
+    [orgId],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function recordFinanceEvent(
+  app: FastifyInstance,
+  input: {
+    orgId: string;
+    provider: CheckoutProvider;
+    eventType: FinanceEventType;
+    status: FinanceEventStatus;
+    externalId?: string | null;
+    externalRef?: string | null;
+    amountCents?: number | null;
+    currency?: string | null;
+    reason?: string | null;
+    payload?: unknown;
+    result?: unknown;
+    error?: string | null;
+  },
+): Promise<string> {
+  const id = uuidv4();
+  await app.db.query(
+    `
+      INSERT INTO billing_finance_events (
+        id,
+        org_id,
+        provider,
+        event_type,
+        status,
+        external_id,
+        external_ref,
+        amount_cents,
+        currency,
+        reason,
+        payload_json,
+        result_json,
+        error
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `,
+    [
+      id,
+      input.orgId,
+      input.provider,
+      input.eventType,
+      input.status,
+      input.externalId ?? null,
+      input.externalRef ?? null,
+      input.amountCents ?? null,
+      input.currency ?? null,
+      input.reason ?? null,
+      input.payload ?? null,
+      input.result ?? null,
+      input.error ?? null,
+    ],
+  );
+  return id;
+}
+
 async function paypalAccessToken(app: FastifyInstance): Promise<string> {
   if (!app.env.PAYPAL_CLIENT_ID || !app.env.PAYPAL_CLIENT_SECRET) {
     throw new Error("PayPal credentials are missing");
@@ -417,6 +517,35 @@ async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Pr
       await setFreePlan(app, orgId, "stripe", sub.status || "canceled");
     }
   }
+
+  if (event.type === "invoice.payment_failed" || event.type === "invoice.paid") {
+    const invoice = event.data.object as Stripe.Invoice;
+    const subscriptionRef =
+      typeof invoice.subscription === "string"
+        ? invoice.subscription
+        : invoice.subscription && "id" in invoice.subscription
+          ? String(invoice.subscription.id)
+          : null;
+
+    let orgId = invoice.metadata?.orgId ?? "";
+    if (!orgId && subscriptionRef) {
+      orgId = (await findOrgIdBySubscriptionRef(app, "stripe", subscriptionRef)) ?? "";
+    }
+    if (orgId) {
+      await recordFinanceEvent(app, {
+        orgId,
+        provider: "stripe",
+        eventType: event.type === "invoice.payment_failed" ? "payment_failed" : "payment_recovered",
+        status: "processed",
+        externalId: event.id,
+        externalRef: subscriptionRef,
+        amountCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
+        currency: invoice.currency?.toUpperCase() ?? null,
+        payload: event.data.object,
+        result: { eventType: event.type },
+      });
+    }
+  }
 }
 
 async function processRazorpayWebhookPayload(
@@ -456,6 +585,28 @@ async function processRazorpayWebhookPayload(
   });
   if (planId && ["subscription.activated", "subscription.charged", "subscription.authenticated"].includes(payload.event)) {
     await applyEntitlementsFromPlan(app, orgId, planId);
+  }
+
+  if (["subscription.halted", "payment.failed"].includes(payload.event)) {
+    await recordFinanceEvent(app, {
+      orgId,
+      provider: "razorpay",
+      eventType: "payment_failed",
+      status: "processed",
+      externalRef: entity.id,
+      payload,
+      result: { eventType: payload.event },
+    });
+  } else if (["subscription.charged", "payment.captured"].includes(payload.event)) {
+    await recordFinanceEvent(app, {
+      orgId,
+      provider: "razorpay",
+      eventType: "payment_recovered",
+      status: "processed",
+      externalRef: entity.id,
+      payload,
+      result: { eventType: payload.event },
+    });
   }
 }
 
@@ -497,6 +648,30 @@ async function processPaypalWebhookPayload(
   const activeEvents = ["BILLING.SUBSCRIPTION.ACTIVATED", "BILLING.SUBSCRIPTION.UPDATED"];
   if (planId && activeEvents.includes(payload.event_type)) {
     await applyEntitlementsFromPlan(app, orgId, planId);
+  }
+
+  if (payload.event_type === "BILLING.SUBSCRIPTION.PAYMENT.FAILED") {
+    await recordFinanceEvent(app, {
+      orgId,
+      provider: "paypal",
+      eventType: "payment_failed",
+      status: "processed",
+      externalId: payload.id ?? null,
+      externalRef: subscriptionId,
+      payload,
+      result: { eventType: payload.event_type },
+    });
+  } else if (payload.event_type === "BILLING.SUBSCRIPTION.PAYMENT.COMPLETED") {
+    await recordFinanceEvent(app, {
+      orgId,
+      provider: "paypal",
+      eventType: "payment_recovered",
+      status: "processed",
+      externalId: payload.id ?? null,
+      externalRef: subscriptionId,
+      payload,
+      result: { eventType: payload.event_type },
+    });
   }
 }
 
@@ -627,6 +802,396 @@ export async function reconcileFailedWebhookEvents(
 }
 
 export const billingRoutes: FastifyPluginAsync = async (app) => {
+  app.get(
+    "/subscription",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request, reply) => {
+      const subscription = await getOrgSubscription(app, request.authUser!.orgId);
+      if (!subscription) {
+        return reply.code(404).send({ message: "Subscription not found" });
+      }
+
+      return {
+        subscription: {
+          provider: subscription.billing_provider,
+          status: subscription.status,
+          planCode: subscription.plan_code,
+          planName: subscription.plan_name,
+          externalSubscriptionId: subscriptionIdForProvider(subscription),
+        },
+      };
+    },
+  );
+
+  app.get(
+    "/finance-events",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request) => {
+      const query = z
+        .object({
+          type: z.enum(["subscription_cancel", "refund", "payment_failed", "payment_recovered"]).optional(),
+          status: z.enum(["pending", "processed", "failed", "mocked"]).optional(),
+          limit: z.coerce.number().int().min(1).max(200).default(50),
+        })
+        .parse(request.query ?? {});
+
+      const events = await app.db.query(
+        `
+          SELECT
+            id,
+            provider,
+            event_type,
+            status,
+            external_id,
+            external_ref,
+            amount_cents,
+            currency,
+            reason,
+            error,
+            created_at,
+            updated_at
+          FROM billing_finance_events
+          WHERE org_id = $1
+            AND ($2::text IS NULL OR event_type = $2)
+            AND ($3::text IS NULL OR status = $3)
+          ORDER BY created_at DESC
+          LIMIT $4
+        `,
+        [request.authUser!.orgId, query.type ?? null, query.status ?? null, query.limit],
+      );
+
+      return { events: events.rows };
+    },
+  );
+
+  app.post(
+    "/subscription/cancel",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request, reply) => {
+      const body = z
+        .object({
+          atPeriodEnd: z.boolean().optional().default(true),
+          reason: z.string().min(2).max(500).optional(),
+        })
+        .parse(request.body ?? {});
+
+      const orgId = request.authUser!.orgId;
+      const subscription = await getOrgSubscription(app, orgId);
+      if (!subscription) {
+        return reply.code(404).send({ message: "Subscription not found" });
+      }
+      if (subscription.plan_code === "free") {
+        return reply.code(409).send({ message: "Free plan has no paid subscription to cancel" });
+      }
+
+      const provider = subscription.billing_provider;
+      const providerSubId = subscriptionIdForProvider(subscription);
+      let mode: "mock" | "provider" = "mock";
+      let externalActionId: string | null = null;
+      let providerResult: unknown = { mocked: true };
+
+      try {
+        if (provider === "stripe" && app.env.STRIPE_SECRET_KEY && subscription.stripe_subscription_id) {
+          const stripe = new Stripe(app.env.STRIPE_SECRET_KEY);
+          mode = "provider";
+          if (body.atPeriodEnd) {
+            const updated = await stripe.subscriptions.update(subscription.stripe_subscription_id, {
+              cancel_at_period_end: true,
+            });
+            externalActionId = updated.id;
+            providerResult = {
+              id: updated.id,
+              status: updated.status,
+              cancel_at_period_end: updated.cancel_at_period_end,
+            };
+          } else {
+            const canceled = await stripe.subscriptions.cancel(subscription.stripe_subscription_id);
+            externalActionId = canceled.id;
+            providerResult = {
+              id: canceled.id,
+              status: canceled.status,
+              canceled_at: canceled.canceled_at,
+            };
+          }
+        } else if (provider === "razorpay" && app.env.RAZORPAY_KEY_ID && app.env.RAZORPAY_KEY_SECRET && subscription.razorpay_subscription_id) {
+          mode = "provider";
+          const response = await fetch(`https://api.razorpay.com/v1/subscriptions/${subscription.razorpay_subscription_id}/cancel`, {
+            method: "POST",
+            headers: {
+              authorization: createBasicAuth(app.env.RAZORPAY_KEY_ID, app.env.RAZORPAY_KEY_SECRET),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ cancel_at_cycle_end: body.atPeriodEnd ? 1 : 0 }),
+          });
+          if (!response.ok) {
+            throw new Error(`Razorpay cancel failed with status ${response.status}`);
+          }
+          const payload = (await response.json()) as { id?: string; status?: string };
+          externalActionId = payload.id ?? subscription.razorpay_subscription_id;
+          providerResult = payload;
+        } else if (provider === "paypal" && app.env.PAYPAL_CLIENT_ID && app.env.PAYPAL_CLIENT_SECRET && subscription.paypal_subscription_id) {
+          mode = "provider";
+          const token = await paypalAccessToken(app);
+          const response = await fetch(
+            `${paypalBaseUrl(app.env.PAYPAL_ENVIRONMENT)}/v1/billing/subscriptions/${subscription.paypal_subscription_id}/cancel`,
+            {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ reason: body.reason ?? "Customer requested cancellation" }),
+            },
+          );
+          if (![200, 202, 204].includes(response.status)) {
+            throw new Error(`PayPal cancel failed with status ${response.status}`);
+          }
+          externalActionId = subscription.paypal_subscription_id;
+          providerResult = response.status === 204 ? { id: externalActionId, status: "CANCELLED" } : await response.json();
+        }
+      } catch (error) {
+        const financeEventId = await recordFinanceEvent(app, {
+          orgId,
+          provider,
+          eventType: "subscription_cancel",
+          status: "failed",
+          externalRef: providerSubId,
+          reason: body.reason ?? null,
+          payload: { atPeriodEnd: body.atPeriodEnd },
+          error: String(error),
+        });
+
+        await app.audit.log({
+          actorUserId: request.authUser!.userId,
+          orgId,
+          action: "billing.subscription.cancel.failed",
+          entityType: "subscription",
+          entityId: orgId,
+          metadata: { provider, atPeriodEnd: body.atPeriodEnd, financeEventId, error: String(error) },
+        });
+
+        return reply.code(502).send({ message: `Subscription cancel failed: ${String(error)}` });
+      }
+
+      const nextStatus = body.atPeriodEnd ? "cancel_at_period_end" : "canceled";
+      if (body.atPeriodEnd) {
+        await upsertSubscriptionState(app, {
+          orgId,
+          provider,
+          status: nextStatus,
+          planId: subscription.plan_id,
+          stripeSubscriptionId: subscription.stripe_subscription_id,
+          razorpaySubscriptionId: subscription.razorpay_subscription_id,
+          paypalSubscriptionId: subscription.paypal_subscription_id,
+        });
+      } else {
+        await setFreePlan(app, orgId, provider, nextStatus);
+      }
+
+      const financeEventId = await recordFinanceEvent(app, {
+        orgId,
+        provider,
+        eventType: "subscription_cancel",
+        status: mode === "mock" ? "mocked" : "processed",
+        externalId: externalActionId,
+        externalRef: providerSubId,
+        reason: body.reason ?? null,
+        payload: { atPeriodEnd: body.atPeriodEnd },
+        result: providerResult,
+      });
+
+      await app.audit.log({
+        actorUserId: request.authUser!.userId,
+        orgId,
+        action: "billing.subscription.cancel",
+        entityType: "subscription",
+        entityId: orgId,
+        metadata: { provider, mode, atPeriodEnd: body.atPeriodEnd, financeEventId },
+      });
+
+      return {
+        ok: true,
+        provider,
+        mode,
+        atPeriodEnd: body.atPeriodEnd,
+        status: nextStatus,
+        financeEventId,
+      };
+    },
+  );
+
+  app.post(
+    "/refund",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request, reply) => {
+      const body = z
+        .object({
+          paymentId: z.string().min(3),
+          amountCents: z.coerce.number().int().positive().optional(),
+          currency: z.string().length(3).optional().default("USD"),
+          reason: z.string().min(2).max(500).optional(),
+        })
+        .parse(request.body ?? {});
+
+      const orgId = request.authUser!.orgId;
+      const subscription = await getOrgSubscription(app, orgId);
+      if (!subscription) {
+        return reply.code(404).send({ message: "Subscription not found" });
+      }
+
+      const provider = subscription.billing_provider;
+      const currency = body.currency.toUpperCase();
+      let mode: "mock" | "provider" = "mock";
+      let externalRefundId: string | null = null;
+      let providerResult: unknown = { mocked: true, paymentId: body.paymentId };
+
+      try {
+        if (provider === "stripe" && app.env.STRIPE_SECRET_KEY) {
+          mode = "provider";
+          const stripe = new Stripe(app.env.STRIPE_SECRET_KEY);
+          const refundInput: Stripe.RefundCreateParams =
+            body.paymentId.startsWith("pi_") ? { payment_intent: body.paymentId } : { charge: body.paymentId };
+          if (body.amountCents) {
+            refundInput.amount = body.amountCents;
+          }
+          if (body.reason) {
+            refundInput.reason = "requested_by_customer";
+          }
+          refundInput.metadata = {
+            orgId,
+            note: body.reason ?? "",
+          };
+
+          const refund = await stripe.refunds.create(refundInput);
+          externalRefundId = refund.id;
+          providerResult = {
+            id: refund.id,
+            status: refund.status,
+            amount: refund.amount,
+            currency: refund.currency?.toUpperCase(),
+          };
+        } else if (provider === "razorpay" && app.env.RAZORPAY_KEY_ID && app.env.RAZORPAY_KEY_SECRET) {
+          mode = "provider";
+          const payload: Record<string, unknown> = { speed: "normal" };
+          if (body.amountCents) payload.amount = body.amountCents;
+          if (body.reason) payload.notes = { reason: body.reason };
+
+          const response = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(body.paymentId)}/refund`, {
+            method: "POST",
+            headers: {
+              authorization: createBasicAuth(app.env.RAZORPAY_KEY_ID, app.env.RAZORPAY_KEY_SECRET),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            throw new Error(`Razorpay refund failed with status ${response.status}`);
+          }
+          const refund = (await response.json()) as { id?: string; status?: string; amount?: number; currency?: string };
+          externalRefundId = refund.id ?? null;
+          providerResult = refund;
+        } else if (provider === "paypal" && app.env.PAYPAL_CLIENT_ID && app.env.PAYPAL_CLIENT_SECRET) {
+          mode = "provider";
+          const token = await paypalAccessToken(app);
+          const payload: Record<string, unknown> = {};
+          if (body.amountCents) {
+            payload.amount = {
+              currency_code: currency,
+              value: (body.amountCents / 100).toFixed(2),
+            };
+          }
+          if (body.reason) {
+            payload.note_to_payer = body.reason;
+          }
+
+          const response = await fetch(
+            `${paypalBaseUrl(app.env.PAYPAL_ENVIRONMENT)}/v2/payments/captures/${encodeURIComponent(body.paymentId)}/refund`,
+            {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            },
+          );
+          if (![200, 201, 202].includes(response.status)) {
+            throw new Error(`PayPal refund failed with status ${response.status}`);
+          }
+          const refund = await response.json();
+          externalRefundId = typeof refund?.id === "string" ? refund.id : null;
+          providerResult = refund;
+        } else {
+          externalRefundId = `mock_refund_${uuidv4().replace(/-/g, "").slice(0, 12)}`;
+          providerResult = { mocked: true, id: externalRefundId, paymentId: body.paymentId };
+        }
+      } catch (error) {
+        const financeEventId = await recordFinanceEvent(app, {
+          orgId,
+          provider,
+          eventType: "refund",
+          status: "failed",
+          externalRef: body.paymentId,
+          amountCents: body.amountCents ?? null,
+          currency,
+          reason: body.reason ?? null,
+          payload: { paymentId: body.paymentId },
+          error: String(error),
+        });
+
+        await app.audit.log({
+          actorUserId: request.authUser!.userId,
+          orgId,
+          action: "billing.refund.failed",
+          entityType: "payment",
+          entityId: body.paymentId,
+          metadata: { provider, financeEventId, error: String(error) },
+        });
+
+        return reply.code(502).send({ message: `Refund failed: ${String(error)}` });
+      }
+
+      const financeEventId = await recordFinanceEvent(app, {
+        orgId,
+        provider,
+        eventType: "refund",
+        status: mode === "mock" ? "mocked" : "processed",
+        externalId: externalRefundId,
+        externalRef: body.paymentId,
+        amountCents: body.amountCents ?? null,
+        currency,
+        reason: body.reason ?? null,
+        payload: { paymentId: body.paymentId },
+        result: providerResult,
+      });
+
+      await app.audit.log({
+        actorUserId: request.authUser!.userId,
+        orgId,
+        action: "billing.refund.create",
+        entityType: "payment",
+        entityId: body.paymentId,
+        metadata: { provider, mode, financeEventId, amountCents: body.amountCents ?? null, currency },
+      });
+
+      return {
+        ok: true,
+        provider,
+        mode,
+        refundId: externalRefundId,
+        financeEventId,
+      };
+    },
+  );
+
   app.post(
     "/checkout-session",
     {

@@ -163,6 +163,82 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, ...summary };
   });
 
+  app.get("/billing-finance-events", async (request) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        type: z.enum(["subscription_cancel", "refund", "payment_failed", "payment_recovered"]).optional(),
+        status: z.enum(["pending", "processed", "failed", "mocked"]).optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const events = await app.db.query(
+      `
+        SELECT
+          id,
+          org_id,
+          provider,
+          event_type,
+          status,
+          external_id,
+          external_ref,
+          amount_cents,
+          currency,
+          reason,
+          error,
+          created_at,
+          updated_at
+        FROM billing_finance_events
+        WHERE ($1::text IS NULL OR provider = $1)
+          AND ($2::text IS NULL OR event_type = $2)
+          AND ($3::text IS NULL OR status = $3)
+          AND ($4::uuid IS NULL OR org_id = $4)
+        ORDER BY created_at DESC
+        LIMIT $5
+      `,
+      [query.provider ?? null, query.type ?? null, query.status ?? null, query.orgId ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      processed: string;
+      failed: string;
+      mocked: string;
+      refunds: string;
+      cancellations: string;
+      payment_failed: string;
+    }>(
+      `
+        SELECT
+          COUNT(*)::text AS total,
+          COUNT(*) FILTER (WHERE status = 'processed')::text AS processed,
+          COUNT(*) FILTER (WHERE status = 'failed')::text AS failed,
+          COUNT(*) FILTER (WHERE status = 'mocked')::text AS mocked,
+          COUNT(*) FILTER (WHERE event_type = 'refund')::text AS refunds,
+          COUNT(*) FILTER (WHERE event_type = 'subscription_cancel')::text AS cancellations,
+          COUNT(*) FILTER (WHERE event_type = 'payment_failed')::text AS payment_failed
+        FROM billing_finance_events
+      `,
+    );
+
+    return {
+      events: events.rows,
+      stats:
+        stats.rows[0] ??
+        {
+          total: "0",
+          processed: "0",
+          failed: "0",
+          mocked: "0",
+          refunds: "0",
+          cancellations: "0",
+          payment_failed: "0",
+        },
+    };
+  });
+
   app.patch("/users/:id/plan", async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ planCode: z.enum(["free", "pro", "team"]) }).parse(request.body);

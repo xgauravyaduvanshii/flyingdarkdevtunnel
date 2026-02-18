@@ -102,6 +102,10 @@ bash scripts/integration-smoke.sh
 ## Billing providers
 
 - `POST /v1/billing/checkout-session` accepts `provider` = `stripe` | `razorpay` | `paypal`.
+- `GET /v1/billing/subscription` returns current subscription/provider state.
+- `POST /v1/billing/subscription/cancel` supports immediate cancel or period-end cancel.
+- `POST /v1/billing/refund` issues provider-aware refunds (or mock fallback in local/dev).
+- `GET /v1/billing/finance-events` returns org-scoped finance operation history.
 - Webhooks:
   - `POST /v1/billing/webhook/stripe` (legacy alias: `/v1/billing/webhook`)
   - `POST /v1/billing/webhook/razorpay`
@@ -112,6 +116,8 @@ bash scripts/integration-smoke.sh
 - Replay/reconcile endpoints:
   - `POST /v1/admin/billing-webhooks/:id/replay`
   - `POST /v1/admin/billing-webhooks/reconcile`
+- Admin finance ops endpoint:
+  - `GET /v1/admin/billing-finance-events`
 
 ## Certificate worker alerts
 

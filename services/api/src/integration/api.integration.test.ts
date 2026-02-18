@@ -191,6 +191,123 @@ describe("api integration", () => {
     }
   }, 30_000);
 
+  it("supports mock subscription cancel + refund finance operations with audit visibility", async () => {
+    const email = `integration-finops-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Finance Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+
+    const registerBody = registerRes.json() as { accessToken: string };
+    const accessToken = registerBody.accessToken;
+    const accessClaims = jwt.verify(accessToken, process.env.JWT_SECRET!) as { orgId: string };
+    const orgId = accessClaims.orgId;
+
+    await app.db.query(
+      `
+        UPDATE subscriptions
+        SET
+          billing_provider = 'stripe',
+          status = 'active',
+          plan_id = '22222222-2222-2222-2222-222222222222',
+          stripe_subscription_id = 'sub_mock_finops'
+        WHERE org_id = $1
+      `,
+      [orgId],
+    );
+    await app.db.query(
+      `
+        UPDATE entitlements
+        SET
+          plan_id = '22222222-2222-2222-2222-222222222222',
+          max_tunnels = 25,
+          max_concurrent_conns = 500,
+          reserved_domains = TRUE,
+          custom_domains = TRUE,
+          ip_allowlist = TRUE,
+          retention_hours = 168,
+          updated_at = NOW()
+        WHERE org_id = $1
+      `,
+      [orgId],
+    );
+
+    const subscriptionRes = await app.inject({
+      method: "GET",
+      url: "/v1/billing/subscription",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(subscriptionRes.statusCode).toBe(200);
+    const subscriptionBody = subscriptionRes.json() as {
+      subscription: { provider: string; status: string; planCode: string | null };
+    };
+    expect(subscriptionBody.subscription.provider).toBe("stripe");
+    expect(subscriptionBody.subscription.planCode).toBe("pro");
+
+    const cancelRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/subscription/cancel",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { atPeriodEnd: false, reason: "integration cancel now" },
+    });
+    expect(cancelRes.statusCode).toBe(200);
+    const cancelBody = cancelRes.json() as {
+      ok: boolean;
+      mode: "mock" | "provider";
+      status: string;
+    };
+    expect(cancelBody.ok).toBe(true);
+    expect(cancelBody.mode).toBe("mock");
+    expect(cancelBody.status).toBe("canceled");
+
+    const refundRes = await app.inject({
+      method: "POST",
+      url: "/v1/billing/refund",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { paymentId: "pi_mock_payment_123", amountCents: 1200, reason: "integration refund request" },
+    });
+    expect(refundRes.statusCode).toBe(200);
+    const refundBody = refundRes.json() as {
+      ok: boolean;
+      mode: "mock" | "provider";
+      refundId: string | null;
+    };
+    expect(refundBody.ok).toBe(true);
+    expect(refundBody.mode).toBe("mock");
+    expect(refundBody.refundId).toContain("mock_refund_");
+
+    const financeEventsRes = await app.inject({
+      method: "GET",
+      url: "/v1/billing/finance-events?limit=20",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(financeEventsRes.statusCode).toBe(200);
+    const financeEventsBody = financeEventsRes.json() as {
+      events: Array<{ event_type: string; status: string }>;
+    };
+    expect(financeEventsBody.events.some((event) => event.event_type === "subscription_cancel")).toBe(true);
+    expect(financeEventsBody.events.some((event) => event.event_type === "refund")).toBe(true);
+
+    const adminFinanceRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/billing-finance-events?limit=100",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminFinanceRes.statusCode).toBe(200);
+    const adminFinanceBody = adminFinanceRes.json() as {
+      events: Array<{ org_id: string; event_type: string }>;
+      stats: { total: string; refunds: string; cancellations: string };
+    };
+    expect(adminFinanceBody.events.some((event) => event.org_id === orgId && event.event_type === "refund")).toBe(true);
+    expect(Number.parseInt(adminFinanceBody.stats.total, 10)).toBeGreaterThan(0);
+    expect(Number.parseInt(adminFinanceBody.stats.refunds, 10)).toBeGreaterThan(0);
+    expect(Number.parseInt(adminFinanceBody.stats.cancellations, 10)).toBeGreaterThan(0);
+  }, 30_000);
+
   it("deduplicates Razorpay webhook events with idempotent processing", async () => {
     const email = `integration-rzp-${randomUUID()}@example.com`;
     const password = "passw0rd123";

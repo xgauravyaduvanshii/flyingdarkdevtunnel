@@ -16,6 +16,8 @@
   - custom-domain create/verify/route,
   - start tunnel and verify enriched agent token claims,
   - billing checkout provider fallbacks (`stripe`, `razorpay`, `paypal`) with mock URLs,
+  - finance operations (`/billing/subscription/cancel`, `/billing/refund`) with mock fallback,
+  - user and admin finance-event visibility APIs,
   - billing webhook idempotency (`billing_webhook_events`) for duplicate Razorpay events,
   - admin billing-webhook visibility API for operations,
   - admin replay/reconcile billing webhook operations.
