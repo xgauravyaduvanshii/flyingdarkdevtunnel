@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flyingdarkdevtunnel/fdt/proto"
+	"github.com/xgauravyaduvanshii/flyingdarkdevtunnel/go/proto"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"

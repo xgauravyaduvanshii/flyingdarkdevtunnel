@@ -4,8 +4,8 @@ message: "If you use this project in research or publications, please cite it us
 type: software
 authors:
   - family-names: "FlyingDarkDevTunnel Maintainers"
-repository-code: "https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel"
-url: "https://github.com/flyingdarkdevtunnel/flyingdarkdevtunnel"
+repository-code: "https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel"
+url: "https://github.com/xgauravyaduvanshii/flyingdarkdevtunnel"
 license: "AGPL-3.0-only"
 version: "0.1.0"
 date-released: "2026-02-18"

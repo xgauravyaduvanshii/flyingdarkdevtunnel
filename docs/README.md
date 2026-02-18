@@ -81,6 +81,12 @@ Implementation-focused documentation for engineers shipping, operating, and hard
 - `docs/assets/edge-policy-flow.svg`
 - `docs/assets/certificate-lifecycle-flow.svg`
 - `docs/assets/billing-reconciliation-flow.svg`
+- `docs/assets/monorepo-map.svg`
+- `docs/assets/security-defense-layers.svg`
+- `docs/assets/contribution-workflow.svg`
+- `docs/assets/release-ops-loop.svg`
+- `docs/assets/payment-orchestration-layers.svg`
+- `docs/assets/cert-incident-timeline.svg`
 
 ---
 

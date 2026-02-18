@@ -1,4 +1,4 @@
-module github.com/flyingdarkdevtunnel/fdt
+module github.com/xgauravyaduvanshii/flyingdarkdevtunnel/go
 
 go 1.18
 

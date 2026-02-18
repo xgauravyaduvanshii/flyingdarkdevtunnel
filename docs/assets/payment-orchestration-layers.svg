@@ -1,0 +1,33 @@
+<svg width="1300" height="720" viewBox="0 0 1300 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Payment orchestration layers">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1300" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1300" height="720" fill="url(#bg)"/>
+
+  <text x="44" y="58" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Payment Orchestration Layers</text>
+  <text x="44" y="92" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="18">Stripe, Razorpay, and PayPal events are normalized into one entitlement and finance control loop.</text>
+
+  <rect x="72" y="130" width="1156" height="116" rx="18" fill="#0EA5E9"/>
+  <text x="102" y="174" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">1. Provider Event Intake</text>
+  <text x="102" y="204" fill="#E0F2FE" font-family="Segoe UI, Arial, sans-serif" font-size="16">Signed webhooks, provider event IDs, replay protection, and canonical payload capture</text>
+
+  <rect x="112" y="272" width="1076" height="116" rx="18" fill="#22C55E"/>
+  <text x="142" y="316" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">2. Entitlement Convergence</text>
+  <text x="142" y="346" fill="#DCFCE7" font-family="Segoe UI, Arial, sans-serif" font-size="16">Map provider plans to internal capabilities, apply grace windows, sync tunnel and policy limits</text>
+
+  <rect x="152" y="414" width="996" height="116" rx="18" fill="#F97316"/>
+  <text x="182" y="458" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">3. Dunning and Recovery</text>
+  <text x="182" y="488" fill="#FFEDD5" font-family="Segoe UI, Arial, sans-serif" font-size="16">Failed charge classification, retry policy orchestration, notification fanout, downgrade safety rules</text>
+
+  <rect x="192" y="556" width="916" height="116" rx="18" fill="#6366F1"/>
+  <text x="222" y="600" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">4. Finance and Audit Outputs</text>
+  <text x="222" y="630" fill="#E0E7FF" font-family="Segoe UI, Arial, sans-serif" font-size="16">Scheduled exports, settlement receipt verification, reconciliation deltas, immutable audit references</text>
+
+  <line x1="650" y1="246" x2="650" y2="272" stroke="#334155" stroke-width="3"/>
+  <line x1="650" y1="388" x2="650" y2="414" stroke="#334155" stroke-width="3"/>
+  <line x1="650" y1="530" x2="650" y2="556" stroke="#334155" stroke-width="3"/>
+</svg>

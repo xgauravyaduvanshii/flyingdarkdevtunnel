@@ -1,0 +1,36 @@
+<svg width="1200" height="560" viewBox="0 0 1200 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Release and operations loop">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1E293B"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="560" fill="url(#bg)"/>
+  <text x="42" y="56" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Release and Operations Feedback Loop</text>
+
+  <circle cx="600" cy="290" r="190" fill="#FFFFFF" stroke="#94A3B8" stroke-width="3"/>
+
+  <rect x="520" y="86" width="160" height="68" rx="12" fill="#0EA5E9"/>
+  <text x="552" y="128" fill="#F0F9FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Build</text>
+
+  <rect x="860" y="258" width="160" height="68" rx="12" fill="#22C55E"/>
+  <text x="892" y="300" fill="#F0FDF4" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Deploy</text>
+
+  <rect x="520" y="424" width="160" height="68" rx="12" fill="#F97316"/>
+  <text x="550" y="466" fill="#FFF7ED" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Observe</text>
+
+  <rect x="180" y="258" width="160" height="68" rx="12" fill="#6366F1"/>
+  <text x="212" y="300" fill="#EEF2FF" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700">Improve</text>
+
+  <line x1="680" y1="120" x2="850" y2="258" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="860" y1="326" x2="680" y2="424" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="520" y1="458" x2="340" y2="326" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="340" y1="258" x2="520" y2="154" stroke="#1E293B" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <text x="522" y="256" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="700">CI + Integration + Smoke</text>
+  <text x="470" y="288" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="14">metrics, alerts, runbooks, incident learnings feed the next release</text>
+</svg>
