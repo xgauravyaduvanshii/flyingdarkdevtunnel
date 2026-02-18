@@ -18,6 +18,9 @@ const links = [
   ["/admin/billing-dunning", "Dunning Ops"],
   ["/admin/billing-reports", "Reports Ops"],
   ["/admin/billing-invoices", "Invoices Ops"],
+  ["/admin/relay-edges", "Relay Edges"],
+  ["/admin/cert-sources", "Cert Sources"],
+  ["/admin/security", "Security Ops"],
   ["/admin/audit", "Audit Ops"],
 ] as const;
 

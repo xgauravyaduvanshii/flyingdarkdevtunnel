@@ -8,7 +8,7 @@ type ExportJob = {
   org_id: string | null;
   dataset: "finance_events" | "invoices" | "dunning";
   status: "pending" | "running" | "completed" | "failed";
-  destination: "inline" | "webhook";
+  destination: "inline" | "webhook" | "s3" | "warehouse";
   sink_url: string | null;
   row_count: number | null;
   error: string | null;
@@ -47,7 +47,7 @@ export default function AdminBillingReportsPage() {
         body: JSON.stringify({
           dataset,
           destination,
-          sinkUrl: destination === "webhook" ? sinkUrl || undefined : undefined,
+          sinkUrl: destination === "webhook" || destination === "warehouse" ? sinkUrl || undefined : undefined,
           orgId: orgId || undefined,
         }),
       });
@@ -79,13 +79,15 @@ export default function AdminBillingReportsPage() {
             <select value={destination} onChange={(event) => setDestination(event.target.value as ExportJob["destination"])}>
               <option value="inline">Inline (DB)</option>
               <option value="webhook">Webhook</option>
+              <option value="warehouse">Warehouse Loader</option>
+              <option value="s3">S3/Object Store</option>
             </select>
           </div>
           <div>
             <label>Org ID (optional)</label>
             <input value={orgId} onChange={(event) => setOrgId(event.target.value)} placeholder="00000000-..." />
           </div>
-          {destination === "webhook" && (
+          {(destination === "webhook" || destination === "warehouse") && (
             <div>
               <label>Sink URL</label>
               <input value={sinkUrl} onChange={(event) => setSinkUrl(event.target.value)} placeholder="https://ops.example.com/reports" />
