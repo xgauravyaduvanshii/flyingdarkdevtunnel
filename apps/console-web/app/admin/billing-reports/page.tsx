@@ -14,6 +14,9 @@ type ExportJob = {
   attempts: number;
   max_attempts: number;
   last_delivery_status: string | null;
+  delivery_ack_status: "not_required" | "pending" | "acknowledged" | "expired";
+  delivery_ack_deadline: string | null;
+  delivery_ack_at: string | null;
   row_count: number | null;
   error: string | null;
   created_at: string;
@@ -82,6 +85,22 @@ export default function AdminBillingReportsPage() {
     }
   }
 
+  async function reconcileMissingAcks() {
+    setBusy(true);
+    try {
+      const response = await api<{ attempted: number; replayed: number }>("/v1/admin/billing-reports/exports/ack-reconcile", {
+        method: "POST",
+        body: JSON.stringify({ ackStatus: "pending", onlyPastDeadline: true, limit: 200 }),
+      });
+      setMessage(`Ack reconcile queued ${response.replayed}/${response.attempted} exports`);
+      await load();
+    } catch (error) {
+      setMessage(`Ack reconcile failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="grid cols-2">
       <section className="card">
@@ -128,9 +147,14 @@ export default function AdminBillingReportsPage() {
       <section className="card" style={{ gridColumn: "1 / -1" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h3>Export jobs</h3>
-          <button className="button secondary" onClick={() => void reconcileFailed()} disabled={busy}>
-            Reconcile failed
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="button secondary" onClick={() => void reconcileFailed()} disabled={busy}>
+              Reconcile failed
+            </button>
+            <button className="button secondary" onClick={() => void reconcileMissingAcks()} disabled={busy}>
+              Reconcile missing ACKs
+            </button>
+          </div>
         </div>
         <table className="table">
           <thead>
@@ -142,6 +166,8 @@ export default function AdminBillingReportsPage() {
               <th>Attempts</th>
               <th>Next retry</th>
               <th>Delivery state</th>
+              <th>ACK state</th>
+              <th>ACK deadline</th>
               <th>Rows</th>
               <th>Org</th>
               <th>Error</th>
@@ -159,6 +185,8 @@ export default function AdminBillingReportsPage() {
                 </td>
                 <td>{job.next_attempt_at ? new Date(job.next_attempt_at).toLocaleString() : "-"}</td>
                 <td>{job.last_delivery_status ?? "-"}</td>
+                <td>{job.delivery_ack_status}</td>
+                <td>{job.delivery_ack_deadline ? new Date(job.delivery_ack_deadline).toLocaleString() : "-"}</td>
                 <td>{job.row_count ?? "-"}</td>
                 <td>{job.org_id ?? "all"}</td>
                 <td style={{ maxWidth: 320, whiteSpace: "normal", wordBreak: "break-word" }}>{job.error ?? "-"}</td>

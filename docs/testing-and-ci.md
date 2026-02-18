@@ -23,7 +23,9 @@
   - admin billing-webhook visibility API for operations,
   - admin replay/reconcile billing webhook operations.
   - billing report export queue with reconcile/reset-attempt operations.
+  - export sink ACK endpoint and admin ACK-reconcile requeue path.
   - certificate event DLQ/admin replay controls and cert region summary.
+  - relay certificate replication snapshot endpoint (`/v1/relay/cert-replication`).
   - weighted relay edge selection with regional failover.
   - adaptive abuse login blocking after high-severity anomaly signals.
 

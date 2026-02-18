@@ -15,6 +15,8 @@ Admin operations:
 - `POST /v1/admin/cert-events/:id/replay` (single-event replay)
 - `POST /v1/admin/cert-events/replay` (bulk replay by status/source/cluster)
 - `GET /v1/admin/domains/cert-region-summary` (cross-region lifecycle summary)
+- `GET /v1/admin/domains/cert-replication` (per-region replica state inventory)
+- `GET /v1/relay/cert-replication` (relay-consumable region snapshot, token-auth)
 
 ## Worker
 - Service: `services/worker-certificates`
@@ -24,7 +26,8 @@ Admin operations:
   3. Optionally run TLS probe fallback on verified domains for drift visibility.
   4. Emit expiry/error alerts with cooldown control.
   5. Trigger signed runbook webhook events for alert-class states.
-  6. Publish Prometheus metrics at `/metrics` (default `:9465`).
+  6. Build region replication snapshots (`cert_region_replicas`) for active-active edge reads.
+  7. Publish Prometheus metrics at `/metrics` (default `:9465`).
 
 ## Updated fields
 - `tls_status`
@@ -51,7 +54,7 @@ Admin operations:
 ## Current limits
 - Event ingest now supports per-source/per-cluster HMAC provenance validation (`CERT_EVENT_SOURCE_KEYS`) with timestamp freshness checks.
 - Probes still run as fallback and process a bounded batch.
-- Region summaries are API-level aggregates by routed tunnel region; active-active write-replication is not yet implemented.
+- Region replication is control-plane state replication and does not yet perform edge-local cert material transfer.
 
 ## Alerts, metrics, and runbooks
 - Prometheus metrics:
@@ -63,6 +66,7 @@ Admin operations:
   - `fdt_cert_renewal_sla_alerts_sent_total`
   - `fdt_cert_runbook_triggers_total`
   - `fdt_cert_runbook_trigger_failures_total`
+  - `fdt_cert_replication_targets_total{state=source|replicated|stale}`
 - Alert rules:
   - `CertificateLifecycleRunbookFailures`
   - `CertificateTlsErrorsPresent`
@@ -77,7 +81,9 @@ Admin operations:
 - `CERT_DEPLOYMENT_ENV` (`dev|staging|prod`)
 - `CERT_RENEWAL_SLA_WARNING_HOURS`
 - `CERT_METRICS_PORT`
+- `CERT_REPLICATION_TARGET_REGIONS`
+- `CERT_REPLICATION_MAX_LAG_SECONDS`
 
 ## Next hardening
-- Add multi-region cert-state replication for active-active relay edges.
-- Add automated DLQ replay policies with escalation classes.
+- Add cert-manager callback/event enrichment for replica freshness confidence scoring.
+- Add cross-region cert material distribution controls for strict active-active failover.

@@ -18,6 +18,9 @@
    - `GET /v1/admin/billing-finance-events`
    - `GET /v1/admin/billing-dunning`
 3. Check worker logs for signature or provider API failures.
+4. For export sink backlog, inspect ACK state on:
+   - `GET /v1/admin/billing-reports/exports`
+   - `POST /v1/admin/billing-reports/exports/ack-reconcile`
 
 ## Replay automation path
 - Worker auto-trigger uses signed endpoint:
@@ -32,6 +35,8 @@
   - stage progression and `next_attempt_at`
   - notification delivery status (`notification_count`, `last_error`)
 - If backlog is growing, lower retry aggressiveness and prioritize provider recovery.
+- If report exports remain `delivered_pending_ack`, run ACK reconcile and verify sink callback path:
+  - `POST /v1/billing/reports/exports/:id/ack`
 
 ## Exit criteria
 - SLO violations return to zero for one full hour.

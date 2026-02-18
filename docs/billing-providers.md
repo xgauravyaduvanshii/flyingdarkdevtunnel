@@ -38,6 +38,10 @@ If provider credentials or mapped plan IDs are missing, the API returns a mock c
 - Signed runbook replay trigger:
   - `POST /v1/billing/runbook/replay`
   - HMAC headers: `x-fdt-runbook-timestamp`, `x-fdt-runbook-signature`
+- Export sink acknowledgement:
+  - `POST /v1/billing/reports/exports/:id/ack`
+  - header: `x-fdt-report-ack-token`
+  - used by external sinks to confirm delivery receipt.
 
 ## Webhooks
 - Stripe: `POST /v1/billing/webhook/stripe` (legacy alias: `POST /v1/billing/webhook`)
@@ -92,6 +96,9 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - supports inline storage, webhook/warehouse sinks, and S3 delivery
   - retry/reconciliation metadata:
     - `attempts`, `max_attempts`, `next_attempt_at`, `last_delivery_status`
+  - sink acknowledgement tracking:
+    - `delivery_ack_status` (`not_required|pending|acknowledged|expired`)
+    - `delivery_ack_deadline`, `delivery_ack_at`, `delivery_ack_metadata`
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
@@ -99,7 +106,7 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 Additional worker hardening:
 - auto-runbook replay triggers by provider/event-class when webhook failures spike,
 - dunning stage advancement + optional signed notification webhooks,
-- report export processing with retry schedules, stale-running recovery, and delivery-state tracking.
+- report export processing with retry schedules, stale-running recovery, delivery-state tracking, and ACK token issuance for external sinks.
 
 ## Env
 - Stripe: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
@@ -116,6 +123,10 @@ Additional worker hardening:
 - Dunning max stage: `BILLING_DUNNING_MAX_STAGE`
 - Report exports: `BILLING_REPORT_EXPORT_BATCH_SIZE`, `BILLING_REPORT_DEFAULT_SINK_URL`, `BILLING_REPORT_SIGNING_SECRET`
 - Report delivery retries: `BILLING_REPORT_RETRY_SCHEDULE_SECONDS`, `BILLING_REPORT_RUNNING_TIMEOUT_SECONDS`
+- Report delivery ACK controls:
+  - `BILLING_REPORT_ACK_ENABLED`
+  - `BILLING_REPORT_ACK_REQUIRED_DESTINATIONS`
+  - `BILLING_REPORT_ACK_TTL_SECONDS`
 - Metrics endpoint: `BILLING_METRICS_PORT`
 
 ## Admin operations
@@ -128,6 +139,7 @@ Additional worker hardening:
   - `POST /v1/admin/billing-reports/exports`
   - `GET /v1/admin/billing-reports/exports`
   - `POST /v1/admin/billing-reports/exports/reconcile`
+  - `POST /v1/admin/billing-reports/exports/ack-reconcile`
   - `GET /v1/admin/billing-invoices?provider=&status=&orgId=&limit=&includeTax=`
   - `GET /v1/admin/billing-invoices/export?provider=&status=&orgId=&dataset=invoices|tax&limit=`
 - Admin UI:

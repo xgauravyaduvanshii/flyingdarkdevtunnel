@@ -32,6 +32,8 @@ const envSchema = z.object({
   CERT_DLQ_REPLAY_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(900),
   CERT_DLQ_REPLAY_MAX_REPLAYS: z.coerce.number().int().positive().default(3),
   CERT_DLQ_REPLAY_MAX_AGE_HOURS: z.coerce.number().int().positive().default(168),
+  CERT_REPLICATION_TARGET_REGIONS: z.string().optional().default("us,eu,ap"),
+  CERT_REPLICATION_MAX_LAG_SECONDS: z.coerce.number().int().positive().default(900),
   CERT_PROBE_FALLBACK_ENABLED: z
     .string()
     .optional()
@@ -51,6 +53,7 @@ let certDlqAutoReplayTotal = 0;
 
 type DomainTlsStatus = "issued" | "expiring" | "tls_error" | "passthrough_unverified" | "pending_route" | "pending_issue";
 type CertFailurePolicy = "standard" | "strict" | "hold";
+type CertReplicationState = "source" | "replicated" | "stale";
 
 type CustomDomain = {
   id: string;
@@ -101,6 +104,7 @@ type CertEventType =
 type CertMetricsSnapshot = {
   generatedAt: number;
   domainStatusCounts: Record<DomainTlsStatus, number>;
+  replicationStateCounts: Record<CertReplicationState, number>;
   pendingEventCount: number;
   failedEventCount: number;
   renewalSlaWarningCount: number;
@@ -116,6 +120,11 @@ let certMetricsSnapshot: CertMetricsSnapshot = {
     passthrough_unverified: 0,
     pending_route: 0,
     pending_issue: 0,
+  },
+  replicationStateCounts: {
+    source: 0,
+    replicated: 0,
+    stale: 0,
   },
   pendingEventCount: 0,
   failedEventCount: 0,
@@ -162,6 +171,14 @@ function eventRetryBackoffSeconds(retryCount: number): number {
   return Math.min(60 * 60, env.CERT_EVENT_BASE_BACKOFF_SECONDS * 2 ** exponent);
 }
 
+function parseRegionList(raw: string): string[] {
+  const items = raw
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => /^[a-z0-9-]{2,20}$/.test(value));
+  return items.length > 0 ? Array.from(new Set(items)) : ["us"];
+}
+
 function hmacSignature(secret: string, timestamp: string, payload: string): string {
   return crypto.createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
 }
@@ -206,6 +223,11 @@ function renderMetrics(): string {
   lines.push("# HELP fdt_cert_dlq_auto_replays_total Certificate DLQ events automatically re-queued by worker.");
   lines.push("# TYPE fdt_cert_dlq_auto_replays_total counter");
   lines.push(`fdt_cert_dlq_auto_replays_total ${certDlqAutoReplayTotal}`);
+  lines.push("# HELP fdt_cert_replication_targets_total Certificate replication targets grouped by replication state.");
+  lines.push("# TYPE fdt_cert_replication_targets_total gauge");
+  for (const [state, count] of Object.entries(certMetricsSnapshot.replicationStateCounts)) {
+    lines.push(`fdt_cert_replication_targets_total{state="${state}"} ${count}`);
+  }
 
   return `${lines.join("\n")}\n`;
 }
@@ -909,6 +931,117 @@ async function autoReplayDlqEvents(): Promise<void> {
   );
 }
 
+async function syncRegionReplicationState(): Promise<void> {
+  const configuredTargets = parseRegionList(env.CERT_REPLICATION_TARGET_REGIONS);
+  const domains = await db.query<{
+    id: string;
+    domain: string;
+    tls_mode: "termination" | "passthrough";
+    tls_status: DomainTlsStatus;
+    certificate_ref: string | null;
+    tls_not_after: Date | null;
+    cert_renewal_due_at: Date | null;
+    cert_last_event_at: Date | null;
+    source_region: string;
+  }>(
+    `
+      SELECT
+        d.id,
+        d.domain,
+        d.tls_mode,
+        d.tls_status,
+        d.certificate_ref,
+        d.tls_not_after,
+        d.cert_renewal_due_at,
+        d.cert_last_event_at,
+        COALESCE(t.region, 'us') AS source_region
+      FROM custom_domains d
+      LEFT JOIN tunnels t ON t.id = d.target_tunnel_id
+      WHERE d.verified = TRUE
+      ORDER BY d.updated_at DESC
+      LIMIT 2000
+    `,
+  );
+
+  for (const domain of domains.rows) {
+    const sourceRegion = domain.source_region.trim().toLowerCase() || "us";
+    const targets = new Set<string>(configuredTargets);
+    targets.add(sourceRegion);
+    const lagSeconds =
+      domain.cert_last_event_at && Number.isFinite(domain.cert_last_event_at.getTime())
+        ? Math.max(0, Math.floor((Date.now() - domain.cert_last_event_at.getTime()) / 1000))
+        : 0;
+
+    for (const targetRegion of targets) {
+      let replicationState: CertReplicationState = targetRegion === sourceRegion ? "source" : "replicated";
+      if (targetRegion !== sourceRegion && lagSeconds > env.CERT_REPLICATION_MAX_LAG_SECONDS) {
+        replicationState = "stale";
+      }
+
+      await db.query(
+        `
+          INSERT INTO cert_region_replicas (
+            id,
+            domain_id,
+            domain,
+            source_region,
+            target_region,
+            tls_mode,
+            tls_status,
+            certificate_ref,
+            tls_not_after,
+            renewal_due_at,
+            cert_last_event_at,
+            replication_state,
+            lag_seconds,
+            synced_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+          ON CONFLICT (domain_id, target_region) DO UPDATE
+          SET
+            domain = EXCLUDED.domain,
+            source_region = EXCLUDED.source_region,
+            tls_mode = EXCLUDED.tls_mode,
+            tls_status = EXCLUDED.tls_status,
+            certificate_ref = EXCLUDED.certificate_ref,
+            tls_not_after = EXCLUDED.tls_not_after,
+            renewal_due_at = EXCLUDED.renewal_due_at,
+            cert_last_event_at = EXCLUDED.cert_last_event_at,
+            replication_state = EXCLUDED.replication_state,
+            lag_seconds = EXCLUDED.lag_seconds,
+            synced_at = NOW(),
+            updated_at = NOW()
+        `,
+        [
+          crypto.randomUUID(),
+          domain.id,
+          domain.domain,
+          sourceRegion,
+          targetRegion,
+          domain.tls_mode,
+          domain.tls_status,
+          domain.certificate_ref,
+          domain.tls_not_after,
+          domain.cert_renewal_due_at,
+          domain.cert_last_event_at,
+          replicationState,
+          lagSeconds,
+        ],
+      );
+    }
+  }
+
+  await db.query(
+    `
+      DELETE FROM cert_region_replicas
+      WHERE target_region <> source_region
+        AND target_region <> ALL($1::text[])
+    `,
+    [configuredTargets],
+  );
+}
+
 async function refreshMetricsSnapshot(): Promise<void> {
   const domainStatusRows = await db.query<{ tls_status: DomainTlsStatus; count: string }>(
     `
@@ -928,6 +1061,22 @@ async function refreshMetricsSnapshot(): Promise<void> {
   };
   for (const row of domainStatusRows.rows) {
     domainStatusCounts[row.tls_status] = Number.parseInt(row.count, 10) || 0;
+  }
+
+  const replicationRows = await db.query<{ replication_state: CertReplicationState; count: string }>(
+    `
+      SELECT replication_state, COUNT(*)::text AS count
+      FROM cert_region_replicas
+      GROUP BY replication_state
+    `,
+  );
+  const replicationStateCounts: Record<CertReplicationState, number> = {
+    source: 0,
+    replicated: 0,
+    stale: 0,
+  };
+  for (const row of replicationRows.rows) {
+    replicationStateCounts[row.replication_state] = Number.parseInt(row.count, 10) || 0;
   }
 
   const eventRows = await db.query<{ pending_count: string; failed_count: string }>(
@@ -965,6 +1114,7 @@ async function refreshMetricsSnapshot(): Promise<void> {
   certMetricsSnapshot = {
     generatedAt: Date.now(),
     domainStatusCounts,
+    replicationStateCounts,
     pendingEventCount: Number.parseInt(counts.pending_count, 10) || 0,
     failedEventCount: Number.parseInt(counts.failed_count, 10) || 0,
     renewalSlaWarningCount: Number.parseInt(renewal.warning_count, 10) || 0,
@@ -981,6 +1131,7 @@ async function loop(): Promise<void> {
         await syncCertificateStateByProbe();
       }
       await checkRenewalSlaEscalations();
+      await syncRegionReplicationState();
       await refreshMetricsSnapshot();
     } catch (error) {
       console.error("[worker-certificates] sync failed", error);

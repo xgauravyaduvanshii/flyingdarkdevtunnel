@@ -178,18 +178,35 @@ Phase 1 (MVP hardening + production readiness improvements)
     - weekly secret rotation verification workflow
     - nightly chaos drill workflow (`scripts/chaos-drill.sh`)
   - Stabilized integration coverage for adaptive abuse blocking by isolating login tests with per-test source IPs.
+- Queue implementation continuation (current update):
+  - Added certificate multi-region replication state model:
+    - new table `cert_region_replicas`
+    - worker sync pass in `services/worker-certificates` with lag-based `source|replicated|stale` state
+    - admin inventory API `GET /v1/admin/domains/cert-replication`
+    - relay snapshot API `GET /v1/relay/cert-replication` (relay token protected)
+    - admin UI page `apps/console-web/app/admin/cert-replication/page.tsx`
+  - Added billing export sink acknowledgement tracking:
+    - `billing_report_exports` ACK fields (`delivery_ack_*`)
+    - worker ACK token issuance/expiry handling for configured destinations
+    - sink callback endpoint `POST /v1/billing/reports/exports/:id/ack`
+    - admin ACK reconcile endpoint `POST /v1/admin/billing-reports/exports/ack-reconcile`
+    - admin billing report UI now surfaces ACK state and missing-ACK reconcile action
+  - Extended integration coverage:
+    - report ACK success + ACK reconcile requeue behavior
+    - relay cert-replication snapshot retrieval path.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Event-driven issuance/renewal status integration shipped with per-source/per-cluster provenance verification.
   - Renewal SLA escalation shipped with environment-aware incident routing (`dev|staging|prod`) and new alert classes.
-  - DLQ replay and cert-region summary shipped; active-active cross-region replication and cert-manager callback depth remain.
+  - DLQ replay, cert-region summary, and control-plane multi-region replication snapshots shipped.
+  - Remaining gap: cert-manager callback enrichment depth and cert-material distribution workflow for strict active-active failover.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
   - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
   - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`).
-  - Export retry/reconciliation pipeline shipped; production retry tuning remains telemetry-driven.
+  - Export retry/reconciliation pipeline + sink ACK tracking shipped; live tuning and external finance sink reconciliation remain.
 - Enterprise controls:
   - Team/org RBAC, role templates, and SCIM-style provisioning event tracking shipped.
   - SSO provider config scaffold shipped; IdP onboarding/enforcement depth remains.
@@ -205,11 +222,11 @@ Phase 1 (MVP hardening + production readiness improvements)
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Add multi-region cert-state replication for active-active relay topologies.
    - Add issuance/renewal callback ingestion depth and incident escalation tiers.
+   - Add cert material distribution workflow for strict active-active failover.
 2. Payment hardening + finance ops:
    - Tune provider retry/dunning policy by live payment telemetry and recovery outcomes.
-   - Add sink delivery acknowledgement tracking and external reconciliation sinks.
+   - Expand external finance reconciliation sinks with signed settlement receipts.
 3. Multi-region edge foundations:
    - Expand beyond US with region capacity planning and failover policy drills.
 4. Enterprise controls:
