@@ -20,14 +20,15 @@
 - Script: `scripts/integration-smoke.sh`
 - Starts:
   - API,
-  - billing + inspector workers,
+  - billing + inspector + certificate workers,
   - relay,
   - local upstream service,
   - agent HTTP/TCP sessions.
 - Verifies:
   - HTTP tunnel routing with Basic Auth,
   - HTTPS termination path,
-  - passthrough host-mode enforcement.
+  - passthrough host-mode enforcement,
+  - admin domain inventory visibility and TLS-mode mapping.
 
 ## CI workflow
 - File: `.github/workflows/ci.yml`

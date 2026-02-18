@@ -307,6 +307,43 @@ importers:
         specifier: ^8.24.1
         version: 8.56.0(eslint@9.39.2)(typescript@5.9.3)
 
+  services/worker-certificates:
+    dependencies:
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      pg:
+        specifier: ^8.13.3
+        version: 8.18.0
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      '@fdt/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@fdt/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^20.17.57
+        version: 20.19.33
+      '@types/pg':
+        specifier: ^8.11.11
+        version: 8.16.0
+      eslint:
+        specifier: ^9.20.1
+        version: 9.39.2
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.24.1
+        version: 8.56.0(eslint@9.39.2)(typescript@5.9.3)
+
   services/worker-inspector:
     dependencies:
       dotenv:

@@ -20,11 +20,21 @@
 2. ACME autocert (`RELAY_AUTOCERT_ENABLE=true`) with host policy allowlist.
 3. Self-signed fallback for local/dev environments.
 
+## Certificate lifecycle state (control-plane)
+- `services/worker-certificates` probes verified/routed domains on an interval and updates:
+  - `tls_status`,
+  - `certificate_ref`,
+  - `tls_not_after`,
+  - `tls_last_error`,
+  - `tls_last_checked_at`.
+- Current statuses in use: `pending_issue`, `pending_route`, `issued`, `expiring`, `tls_error`, `passthrough_unverified`.
+- Passthrough domains remain explicit as `passthrough_unverified` because cert ownership is upstream.
+
 ## Domain verification
 - Domain verification token is created by API.
 - Strict mode (`DOMAIN_VERIFY_STRICT=true`) checks TXT record at `_fdt-verify.<domain>`.
 
 ## Next hardening items
-- Certificate issuance state sync to control-plane.
+- ACME issuance-event and renewal-state sync (replace probe-only signal as source of truth).
 - Renew/expiry observability and alerting.
 - Token revocation and stronger abuse controls.

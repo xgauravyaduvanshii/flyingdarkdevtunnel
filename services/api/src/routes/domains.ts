@@ -36,7 +36,20 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
   app.get("/custom", async (request) => {
     const rows = await app.db.query(
       `
-      SELECT id, domain, verified, verification_token, tls_status, tls_mode, target_tunnel_id, last_verified_at, certificate_ref, created_at
+      SELECT
+        id,
+        domain,
+        verified,
+        verification_token,
+        tls_status,
+        tls_mode,
+        target_tunnel_id,
+        last_verified_at,
+        certificate_ref,
+        tls_last_checked_at,
+        tls_not_after,
+        tls_last_error,
+        created_at
       FROM custom_domains
       WHERE org_id = $1
       ORDER BY created_at DESC
