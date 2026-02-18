@@ -23,6 +23,11 @@ type AgentPayload = {
   tunnelId: string;
   protocol: "http" | "https" | "tcp";
   subdomain: string | null;
+  hosts: string[];
+  tlsModes: Record<string, "termination" | "passthrough">;
+  basicAuthUser: string | null;
+  basicAuthPassword: string | null;
+  ipAllowlist: string[];
   tokenType: "agent";
 };
 
@@ -48,6 +53,11 @@ const plugin: FastifyPluginAsync = async (app) => {
       tunnelId: string;
       protocol: "http" | "https" | "tcp";
       subdomain: string | null;
+      hosts: string[];
+      tlsModes: Record<string, "termination" | "passthrough">;
+      basicAuthUser: string | null;
+      basicAuthPassword: string | null;
+      ipAllowlist: string[];
     }) => {
       return jwt.sign({ ...payload, tokenType: "agent" }, app.env.AGENT_JWT_SECRET, { expiresIn: "15m" });
     },

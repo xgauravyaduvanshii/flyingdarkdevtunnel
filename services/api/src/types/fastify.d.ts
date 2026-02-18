@@ -14,6 +14,11 @@ declare module "fastify" {
         tunnelId: string;
         protocol: "http" | "https" | "tcp";
         subdomain: string | null;
+        hosts: string[];
+        tlsModes: Record<string, "termination" | "passthrough">;
+        basicAuthUser: string | null;
+        basicAuthPassword: string | null;
+        ipAllowlist: string[];
       }) => Promise<string>;
       requireAuth: (request: any, reply: any) => Promise<void>;
       requireAdmin: (request: any, reply: any) => Promise<void>;
@@ -30,6 +35,11 @@ declare module "fastify" {
       tunnelId: string;
       protocol: "http" | "https" | "tcp";
       subdomain: string | null;
+      hosts: string[];
+      tlsModes: Record<string, "termination" | "passthrough">;
+      basicAuthUser: string | null;
+      basicAuthPassword: string | null;
+      ipAllowlist: string[];
       tokenType: "agent";
     };
     audit: {

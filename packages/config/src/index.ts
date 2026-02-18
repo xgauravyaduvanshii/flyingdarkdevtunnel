@@ -33,6 +33,11 @@ export const apiEnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
   AGENT_JWT_SECRET: z.string().min(32),
+  DOMAIN_VERIFY_STRICT: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value.trim().toLowerCase() === "true"),
   S3_ENDPOINT: z.string().optional(),
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),
