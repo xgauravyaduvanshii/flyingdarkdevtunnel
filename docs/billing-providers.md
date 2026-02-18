@@ -30,6 +30,9 @@ If provider credentials or mapped plan IDs are missing, the API returns a mock c
   - uses provider APIs when keys are present, otherwise safe mock mode.
 - User finance history:
   - `GET /v1/billing/finance-events`
+- Invoice and tax records:
+  - `GET /v1/billing/invoices` (`includeTax=true` for linked tax rows)
+  - `GET /v1/billing/invoices/export` (CSV export)
 
 ## Webhooks
 - Stripe: `POST /v1/billing/webhook/stripe` (legacy alias: `POST /v1/billing/webhook`)
@@ -69,6 +72,12 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - finance op trail (`subscription_cancel`, `refund`, `payment_failed`, `payment_recovered`)
   - provider status (`processed`, `failed`, `mocked`)
   - external references, amount/currency, payload/result snapshots
+- `billing_invoices`:
+  - provider invoice/payment references, status, monetary totals, and invoice-period timestamps
+  - payload snapshots for traceability
+- `billing_tax_records`:
+  - tax breakdown rows per invoice (`tax_type`, `jurisdiction`, `rate_bps`, `amount_cents`)
+  - export-ready tax ledger
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
@@ -88,9 +97,12 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - `POST /v1/admin/billing-webhooks/:id/replay`
   - `POST /v1/admin/billing-webhooks/reconcile`
   - `GET /v1/admin/billing-finance-events?provider=&type=&status=&orgId=&limit=`
+  - `GET /v1/admin/billing-invoices?provider=&status=&orgId=&limit=&includeTax=`
+  - `GET /v1/admin/billing-invoices/export?provider=&status=&orgId=&dataset=invoices|tax&limit=`
 - Admin UI:
   - `apps/console-web/app/admin/billing-webhooks/page.tsx`
   - `apps/console-web/app/admin/billing-finance-events/page.tsx`
+  - `apps/console-web/app/admin/billing-invoices/page.tsx`
 
 ## Replay and reconciliation
 - Failed webhook events can be replayed from stored payloads.

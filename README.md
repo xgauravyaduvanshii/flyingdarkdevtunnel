@@ -106,6 +106,8 @@ bash scripts/integration-smoke.sh
 - `POST /v1/billing/subscription/cancel` supports immediate cancel or period-end cancel.
 - `POST /v1/billing/refund` issues provider-aware refunds (or mock fallback in local/dev).
 - `GET /v1/billing/finance-events` returns org-scoped finance operation history.
+- `GET /v1/billing/invoices` returns org invoice + optional tax records.
+- `GET /v1/billing/invoices/export` downloads invoice CSV export.
 - Webhooks:
   - `POST /v1/billing/webhook/stripe` (legacy alias: `/v1/billing/webhook`)
   - `POST /v1/billing/webhook/razorpay`
@@ -118,6 +120,9 @@ bash scripts/integration-smoke.sh
   - `POST /v1/admin/billing-webhooks/reconcile`
 - Admin finance ops endpoint:
   - `GET /v1/admin/billing-finance-events`
+- Admin invoice ops endpoints:
+  - `GET /v1/admin/billing-invoices`
+  - `GET /v1/admin/billing-invoices/export`
 
 ## Certificate worker alerts
 

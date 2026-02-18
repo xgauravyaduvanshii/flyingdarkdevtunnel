@@ -2,6 +2,24 @@ import { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { reconcileFailedWebhookEvents, replayWebhookEventById } from "./billing.js";
 
+const invoiceStatusSchema = z.enum(["draft", "open", "paid", "past_due", "void", "uncollectible", "failed", "refunded"]);
+
+function csvEscape(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function toCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
+  const lines = [headers.map(csvEscape).join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((header) => csvEscape(row[header])).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.auth.requireAdmin);
 
@@ -237,6 +255,242 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           payment_failed: "0",
         },
     };
+  });
+
+  app.get("/billing-invoices", async (request) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: invoiceStatusSchema.optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+        includeTax: z.coerce.boolean().optional().default(false),
+      })
+      .parse(request.query ?? {});
+
+    const invoices = await app.db.query(
+      `
+        SELECT
+          id,
+          org_id,
+          provider,
+          provider_invoice_id,
+          provider_subscription_id,
+          provider_payment_id,
+          status,
+          currency,
+          subtotal_cents,
+          tax_cents,
+          total_cents,
+          amount_due_cents,
+          amount_paid_cents,
+          invoice_url,
+          period_start,
+          period_end,
+          issued_at,
+          due_at,
+          paid_at,
+          created_at,
+          updated_at
+        FROM billing_invoices
+        WHERE ($1::text IS NULL OR provider = $1)
+          AND ($2::text IS NULL OR status = $2)
+          AND ($3::uuid IS NULL OR org_id = $3)
+        ORDER BY created_at DESC
+        LIMIT $4
+      `,
+      [query.provider ?? null, query.status ?? null, query.orgId ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      paid: string;
+      failed: string;
+      refunded: string;
+      total_amount_cents: string;
+      total_tax_cents: string;
+    }>(
+      `
+        SELECT
+          COUNT(*)::text AS total,
+          COUNT(*) FILTER (WHERE status = 'paid')::text AS paid,
+          COUNT(*) FILTER (WHERE status = 'failed')::text AS failed,
+          COUNT(*) FILTER (WHERE status = 'refunded')::text AS refunded,
+          COALESCE(SUM(total_cents), 0)::text AS total_amount_cents,
+          COALESCE(SUM(tax_cents), 0)::text AS total_tax_cents
+        FROM billing_invoices
+        WHERE ($1::text IS NULL OR provider = $1)
+          AND ($2::text IS NULL OR status = $2)
+          AND ($3::uuid IS NULL OR org_id = $3)
+      `,
+      [query.provider ?? null, query.status ?? null, query.orgId ?? null],
+    );
+
+    const taxRecords = query.includeTax
+      ? await app.db.query(
+          `
+            SELECT
+              id,
+              invoice_id,
+              org_id,
+              provider,
+              tax_type,
+              jurisdiction,
+              rate_bps,
+              amount_cents,
+              currency,
+              created_at
+            FROM billing_tax_records
+            WHERE invoice_id = ANY($1::uuid[])
+            ORDER BY created_at DESC
+          `,
+          [invoices.rows.map((row) => row.id)],
+        )
+      : { rows: [] };
+
+    return {
+      invoices: invoices.rows,
+      taxRecords: taxRecords.rows,
+      stats:
+        stats.rows[0] ??
+        {
+          total: "0",
+          paid: "0",
+          failed: "0",
+          refunded: "0",
+          total_amount_cents: "0",
+          total_tax_cents: "0",
+        },
+    };
+  });
+
+  app.get("/billing-invoices/export", async (request, reply) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: invoiceStatusSchema.optional(),
+        orgId: z.string().uuid().optional(),
+        dataset: z.enum(["invoices", "tax"]).optional().default("invoices"),
+        limit: z.coerce.number().int().min(1).max(5000).default(2000),
+      })
+      .parse(request.query ?? {});
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    if (query.dataset === "tax") {
+      const taxes = await app.db.query(
+        `
+          SELECT
+            t.id,
+            t.invoice_id,
+            i.org_id,
+            t.provider,
+            i.provider_invoice_id,
+            i.status AS invoice_status,
+            t.tax_type,
+            t.jurisdiction,
+            t.rate_bps,
+            t.amount_cents,
+            t.currency,
+            t.created_at
+          FROM billing_tax_records t
+          JOIN billing_invoices i ON i.id = t.invoice_id
+          WHERE ($1::text IS NULL OR t.provider = $1)
+            AND ($2::text IS NULL OR i.status = $2)
+            AND ($3::uuid IS NULL OR i.org_id = $3)
+          ORDER BY t.created_at DESC
+          LIMIT $4
+        `,
+        [query.provider ?? null, query.status ?? null, query.orgId ?? null, query.limit],
+      );
+
+      const csv = toCsv(
+        [
+          "id",
+          "invoice_id",
+          "org_id",
+          "provider",
+          "provider_invoice_id",
+          "invoice_status",
+          "tax_type",
+          "jurisdiction",
+          "rate_bps",
+          "amount_cents",
+          "currency",
+          "created_at",
+        ],
+        taxes.rows as Array<Record<string, unknown>>,
+      );
+
+      reply.header("content-type", "text/csv; charset=utf-8");
+      reply.header("content-disposition", `attachment; filename="billing-tax-records-${timestamp}.csv"`);
+      return reply.send(csv);
+    }
+
+    const invoices = await app.db.query(
+      `
+        SELECT
+          id,
+          org_id,
+          provider,
+          provider_invoice_id,
+          provider_subscription_id,
+          provider_payment_id,
+          status,
+          currency,
+          subtotal_cents,
+          tax_cents,
+          total_cents,
+          amount_due_cents,
+          amount_paid_cents,
+          invoice_url,
+          period_start,
+          period_end,
+          issued_at,
+          due_at,
+          paid_at,
+          created_at,
+          updated_at
+        FROM billing_invoices
+        WHERE ($1::text IS NULL OR provider = $1)
+          AND ($2::text IS NULL OR status = $2)
+          AND ($3::uuid IS NULL OR org_id = $3)
+        ORDER BY created_at DESC
+        LIMIT $4
+      `,
+      [query.provider ?? null, query.status ?? null, query.orgId ?? null, query.limit],
+    );
+
+    const csv = toCsv(
+      [
+        "id",
+        "org_id",
+        "provider",
+        "provider_invoice_id",
+        "provider_subscription_id",
+        "provider_payment_id",
+        "status",
+        "currency",
+        "subtotal_cents",
+        "tax_cents",
+        "total_cents",
+        "amount_due_cents",
+        "amount_paid_cents",
+        "invoice_url",
+        "period_start",
+        "period_end",
+        "issued_at",
+        "due_at",
+        "paid_at",
+        "created_at",
+        "updated_at",
+      ],
+      invoices.rows as Array<Record<string, unknown>>,
+    );
+
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header("content-disposition", `attachment; filename="billing-invoices-admin-${timestamp}.csv"`);
+    return reply.send(csv);
   });
 
   app.patch("/users/:id/plan", async (request, reply) => {

@@ -8,6 +8,7 @@
   - custom-domain management,
   - admin/audit and billing hooks (Stripe/Razorpay/PayPal),
   - subscription cancel/refund finance operations + finance-event ledger,
+  - invoice/tax ledger APIs and CSV export surfaces,
   - agent token issuance.
 
 ## Data Plane
@@ -29,7 +30,7 @@
 - `services/worker-certificates`: expiry/tls-error warning pipeline with optional alert-webhook delivery + cooldown.
 
 ## Storage
-- PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements, billing webhook idempotency event store (`billing_webhook_events`), and finance operation ledger (`billing_finance_events`).
+- PostgreSQL: accounts, tunnels, domains, logs metadata, entitlements, billing webhook idempotency event store (`billing_webhook_events`), finance operation ledger (`billing_finance_events`), and invoice/tax ledgers (`billing_invoices`, `billing_tax_records`).
 - Redis: ephemeral coordination and rate-limit support (reserved for current + future flows).
 - S3-compatible object storage: payload references for inspection/replay bodies.
 

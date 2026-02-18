@@ -17,6 +17,13 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Invoice/tax records and reporting exports:
+  - Added invoice and tax ledgers (`billing_invoices`, `billing_tax_records`) plus migrations.
+  - Added user invoice APIs (`/v1/billing/invoices`, `/v1/billing/invoices/export`).
+  - Added admin invoice/tax ops APIs (`/v1/admin/billing-invoices`, `/v1/admin/billing-invoices/export`).
+  - Added Stripe invoice-event persistence into invoice/tax ledgers.
+  - Added billing/admin UI pages for invoice visibility and CSV exports.
+  - Added integration coverage for invoice/tax listing + export behavior.
 - Payment finance-ops hardening:
   - Added user billing APIs for subscription state, cancel, refund, and finance-event history.
   - Added provider-aware cancel/refund execution with safe mock fallbacks in local/dev.
@@ -91,8 +98,8 @@ Phase 1 (MVP hardening + production readiness improvements)
    - Integrate real issuance/renewal events from cert manager.
    - Add retry/backoff semantics and domain-level failure policy.
 2. Payment hardening + finance ops:
-   - Invoice/tax records, failed-payment recovery, and dunning workflows.
-   - Expand refund/cancel from API baseline to finance reporting exports.
+   - Failed-payment recovery and dunning workflows.
+   - Finance reporting packaging (scheduled exports, external sinks).
 3. Multi-region edge foundations:
    - Region-aware relay registration and host assignment.
 4. Enterprise controls:

@@ -214,10 +214,10 @@ describe("api integration", () => {
           billing_provider = 'stripe',
           status = 'active',
           plan_id = '22222222-2222-2222-2222-222222222222',
-          stripe_subscription_id = 'sub_mock_finops'
+          stripe_subscription_id = $2
         WHERE org_id = $1
       `,
-      [orgId],
+      [orgId, `sub_mock_finops_${randomUUID().replace(/-/g, "")}`],
     );
     await app.db.query(
       `
@@ -306,6 +306,136 @@ describe("api integration", () => {
     expect(Number.parseInt(adminFinanceBody.stats.total, 10)).toBeGreaterThan(0);
     expect(Number.parseInt(adminFinanceBody.stats.refunds, 10)).toBeGreaterThan(0);
     expect(Number.parseInt(adminFinanceBody.stats.cancellations, 10)).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("lists and exports invoice and tax records for user and admin scopes", async () => {
+    const email = `integration-invoice-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Invoice Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const registerBody = registerRes.json() as { accessToken: string };
+    const accessToken = registerBody.accessToken;
+    const accessClaims = jwt.verify(accessToken, process.env.JWT_SECRET!) as { orgId: string };
+    const orgId = accessClaims.orgId;
+
+    const otherRegisterRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email: `integration-invoice-other-${randomUUID()}@example.com`, password, orgName: "Other Org" },
+    });
+    expect(otherRegisterRes.statusCode).toBe(201);
+    const otherClaims = jwt.verify((otherRegisterRes.json() as { accessToken: string }).accessToken, process.env.JWT_SECRET!) as {
+      orgId: string;
+    };
+    const otherOrgId = otherClaims.orgId;
+
+    const invoiceId = randomUUID();
+    await app.db.query(
+      `
+        INSERT INTO billing_invoices (
+          id,
+          org_id,
+          provider,
+          provider_invoice_id,
+          provider_subscription_id,
+          provider_payment_id,
+          status,
+          currency,
+          subtotal_cents,
+          tax_cents,
+          total_cents,
+          amount_due_cents,
+          amount_paid_cents,
+          issued_at
+        )
+        VALUES
+          ($1, $2, 'stripe', $3, $4, $5, 'paid', 'USD', 1000, 180, 1180, 0, 1180, NOW()),
+          ($6, $7, 'stripe', $8, $9, $10, 'open', 'USD', 500, 90, 590, 590, 0, NOW())
+      `,
+      [
+        invoiceId,
+        orgId,
+        `in_main_${randomUUID().replace(/-/g, "")}`,
+        `sub_main_${randomUUID().replace(/-/g, "")}`,
+        `pi_main_${randomUUID().replace(/-/g, "")}`,
+        randomUUID(),
+        otherOrgId,
+        `in_other_${randomUUID().replace(/-/g, "")}`,
+        `sub_other_${randomUUID().replace(/-/g, "")}`,
+        `pi_other_${randomUUID().replace(/-/g, "")}`,
+      ],
+    );
+
+    const taxId = randomUUID();
+    await app.db.query(
+      `
+        INSERT INTO billing_tax_records (id, invoice_id, org_id, provider, tax_type, jurisdiction, rate_bps, amount_cents, currency)
+        VALUES ($1, $2, $3, 'stripe', 'provider_total_tax', 'unknown', 1800, 180, 'USD')
+      `,
+      [taxId, invoiceId, orgId],
+    );
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/v1/billing/invoices?includeTax=true&limit=20",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listBody = listRes.json() as {
+      invoices: Array<{ id: string; org_id: string; tax_cents: string | null }>;
+      taxRecords: Array<{ invoice_id: string; amount_cents: string }>;
+    };
+    expect(listBody.invoices.some((row) => row.id === invoiceId && row.org_id === orgId)).toBe(true);
+    expect(listBody.invoices.some((row) => row.org_id === otherOrgId)).toBe(false);
+    expect(listBody.taxRecords.some((row) => row.invoice_id === invoiceId)).toBe(true);
+
+    const exportUserRes = await app.inject({
+      method: "GET",
+      url: "/v1/billing/invoices/export?limit=20",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(exportUserRes.statusCode).toBe(200);
+    expect(String(exportUserRes.headers["content-type"])).toContain("text/csv");
+    expect(exportUserRes.body).toContain("provider_invoice_id");
+    expect(exportUserRes.body).toContain(invoiceId);
+
+    const adminListRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/billing-invoices?orgId=${orgId}&includeTax=true&limit=50`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminListRes.statusCode).toBe(200);
+    const adminListBody = adminListRes.json() as {
+      invoices: Array<{ org_id: string; id: string }>;
+      taxRecords: Array<{ invoice_id: string }>;
+      stats: { total: string; total_tax_cents: string };
+    };
+    expect(adminListBody.invoices.every((row) => row.org_id === orgId)).toBe(true);
+    expect(adminListBody.taxRecords.some((row) => row.invoice_id === invoiceId)).toBe(true);
+    expect(Number.parseInt(adminListBody.stats.total, 10)).toBeGreaterThan(0);
+
+    const adminExportInvoicesRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/billing-invoices/export?orgId=${orgId}&dataset=invoices&limit=50`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminExportInvoicesRes.statusCode).toBe(200);
+    expect(adminExportInvoicesRes.body).toContain("provider_invoice_id");
+    expect(adminExportInvoicesRes.body).toContain(invoiceId);
+
+    const adminExportTaxRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/billing-invoices/export?orgId=${orgId}&dataset=tax&limit=50`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminExportTaxRes.statusCode).toBe(200);
+    expect(adminExportTaxRes.body).toContain("tax_type");
+    expect(adminExportTaxRes.body).toContain(taxId);
   }, 30_000);
 
   it("deduplicates Razorpay webhook events with idempotent processing", async () => {

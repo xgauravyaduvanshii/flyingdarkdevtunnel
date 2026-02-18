@@ -69,6 +69,45 @@ type SubscriptionRow = {
   paypal_subscription_id: string | null;
 };
 
+type InvoiceStatus = "draft" | "open" | "paid" | "past_due" | "void" | "uncollectible" | "failed" | "refunded";
+
+type BillingInvoiceRow = {
+  id: string;
+  org_id: string;
+  provider: CheckoutProvider;
+  provider_invoice_id: string | null;
+  provider_subscription_id: string | null;
+  provider_payment_id: string | null;
+  status: InvoiceStatus;
+  currency: string | null;
+  subtotal_cents: string | null;
+  tax_cents: string | null;
+  total_cents: string | null;
+  amount_due_cents: string | null;
+  amount_paid_cents: string | null;
+  invoice_url: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  issued_at: string | null;
+  due_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type BillingTaxRow = {
+  id: string;
+  invoice_id: string;
+  org_id: string;
+  provider: CheckoutProvider;
+  tax_type: string;
+  jurisdiction: string | null;
+  rate_bps: number | null;
+  amount_cents: string;
+  currency: string | null;
+  created_at: string;
+};
+
 const razorpayWebhookSchema = z
   .object({
     event: z.string(),
@@ -112,6 +151,8 @@ const paypalWebhookSchema = z
   })
   .passthrough();
 
+const invoiceStatusSchema = z.enum(["draft", "open", "paid", "past_due", "void", "uncollectible", "failed", "refunded"]);
+
 function headerValue(value: string | string[] | undefined): string | null {
   if (!value) return null;
   if (Array.isArray(value)) return value[0] ?? null;
@@ -152,6 +193,55 @@ function eventIsFresh(eventTime: Date, maxAgeSeconds: number): boolean {
   const ageMs = Date.now() - eventTime.getTime();
   if (Number.isNaN(ageMs)) return false;
   return ageMs <= maxAgeSeconds * 1000;
+}
+
+function unixToDate(value: number | null | undefined): Date | null {
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value)) return null;
+  return new Date(value * 1000);
+}
+
+function normalizeStripeInvoiceStatus(status: string | null | undefined, eventType?: string): InvoiceStatus {
+  if (eventType === "charge.refunded" || eventType === "charge.refund.updated") return "refunded";
+  switch ((status ?? "").toLowerCase()) {
+    case "draft":
+      return "draft";
+    case "open":
+      return "open";
+    case "paid":
+      return "paid";
+    case "void":
+      return "void";
+    case "uncollectible":
+      return "uncollectible";
+    default:
+      return eventType === "invoice.payment_failed" ? "failed" : "open";
+  }
+}
+
+function sumStripeTaxCents(invoice: Stripe.Invoice): number | null {
+  if (typeof invoice.tax === "number") return invoice.tax;
+  if (Array.isArray(invoice.total_tax_amounts) && invoice.total_tax_amounts.length > 0) {
+    const sum = invoice.total_tax_amounts.reduce((acc, item) => acc + (item.amount ?? 0), 0);
+    return sum;
+  }
+  return null;
+}
+
+function csvEscape(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function toCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
+  const lines = [headers.map(csvEscape).join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((header) => csvEscape(row[header])).join(","));
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 async function startWebhookEvent(
@@ -413,6 +503,337 @@ async function recordFinanceEvent(
   return id;
 }
 
+async function upsertInvoiceRecord(
+  app: FastifyInstance,
+  input: {
+    orgId: string;
+    provider: CheckoutProvider;
+    providerInvoiceId?: string | null;
+    providerSubscriptionId?: string | null;
+    providerPaymentId?: string | null;
+    status: InvoiceStatus;
+    currency?: string | null;
+    subtotalCents?: number | null;
+    taxCents?: number | null;
+    totalCents?: number | null;
+    amountDueCents?: number | null;
+    amountPaidCents?: number | null;
+    invoiceUrl?: string | null;
+    periodStart?: Date | null;
+    periodEnd?: Date | null;
+    issuedAt?: Date | null;
+    dueAt?: Date | null;
+    paidAt?: Date | null;
+    payload?: unknown;
+  },
+): Promise<string> {
+  if (input.providerInvoiceId) {
+    const upsert = await app.db.query<{ id: string }>(
+      `
+        INSERT INTO billing_invoices (
+          id,
+          org_id,
+          provider,
+          provider_invoice_id,
+          provider_subscription_id,
+          provider_payment_id,
+          status,
+          currency,
+          subtotal_cents,
+          tax_cents,
+          total_cents,
+          amount_due_cents,
+          amount_paid_cents,
+          invoice_url,
+          period_start,
+          period_end,
+          issued_at,
+          due_at,
+          paid_at,
+          payload_json
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, UPPER($8), $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        ON CONFLICT (provider, provider_invoice_id) DO UPDATE
+        SET
+          org_id = EXCLUDED.org_id,
+          provider_subscription_id = COALESCE(EXCLUDED.provider_subscription_id, billing_invoices.provider_subscription_id),
+          provider_payment_id = COALESCE(EXCLUDED.provider_payment_id, billing_invoices.provider_payment_id),
+          status = EXCLUDED.status,
+          currency = COALESCE(EXCLUDED.currency, billing_invoices.currency),
+          subtotal_cents = COALESCE(EXCLUDED.subtotal_cents, billing_invoices.subtotal_cents),
+          tax_cents = COALESCE(EXCLUDED.tax_cents, billing_invoices.tax_cents),
+          total_cents = COALESCE(EXCLUDED.total_cents, billing_invoices.total_cents),
+          amount_due_cents = COALESCE(EXCLUDED.amount_due_cents, billing_invoices.amount_due_cents),
+          amount_paid_cents = COALESCE(EXCLUDED.amount_paid_cents, billing_invoices.amount_paid_cents),
+          invoice_url = COALESCE(EXCLUDED.invoice_url, billing_invoices.invoice_url),
+          period_start = COALESCE(EXCLUDED.period_start, billing_invoices.period_start),
+          period_end = COALESCE(EXCLUDED.period_end, billing_invoices.period_end),
+          issued_at = COALESCE(EXCLUDED.issued_at, billing_invoices.issued_at),
+          due_at = COALESCE(EXCLUDED.due_at, billing_invoices.due_at),
+          paid_at = COALESCE(EXCLUDED.paid_at, billing_invoices.paid_at),
+          payload_json = COALESCE(EXCLUDED.payload_json, billing_invoices.payload_json),
+          updated_at = NOW()
+        RETURNING id
+      `,
+      [
+        uuidv4(),
+        input.orgId,
+        input.provider,
+        input.providerInvoiceId,
+        input.providerSubscriptionId ?? null,
+        input.providerPaymentId ?? null,
+        input.status,
+        input.currency ?? null,
+        input.subtotalCents ?? null,
+        input.taxCents ?? null,
+        input.totalCents ?? null,
+        input.amountDueCents ?? null,
+        input.amountPaidCents ?? null,
+        input.invoiceUrl ?? null,
+        input.periodStart ?? null,
+        input.periodEnd ?? null,
+        input.issuedAt ?? null,
+        input.dueAt ?? null,
+        input.paidAt ?? null,
+        input.payload ?? null,
+      ],
+    );
+    return upsert.rows[0].id;
+  }
+
+  const id = uuidv4();
+  await app.db.query(
+    `
+      INSERT INTO billing_invoices (
+        id,
+        org_id,
+        provider,
+        provider_invoice_id,
+        provider_subscription_id,
+        provider_payment_id,
+        status,
+        currency,
+        subtotal_cents,
+        tax_cents,
+        total_cents,
+        amount_due_cents,
+        amount_paid_cents,
+        invoice_url,
+        period_start,
+        period_end,
+        issued_at,
+        due_at,
+        paid_at,
+        payload_json
+      )
+      VALUES ($1, $2, $3, NULL, $4, $5, $6, UPPER($7), $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    `,
+    [
+      id,
+      input.orgId,
+      input.provider,
+      input.providerSubscriptionId ?? null,
+      input.providerPaymentId ?? null,
+      input.status,
+      input.currency ?? null,
+      input.subtotalCents ?? null,
+      input.taxCents ?? null,
+      input.totalCents ?? null,
+      input.amountDueCents ?? null,
+      input.amountPaidCents ?? null,
+      input.invoiceUrl ?? null,
+      input.periodStart ?? null,
+      input.periodEnd ?? null,
+      input.issuedAt ?? null,
+      input.dueAt ?? null,
+      input.paidAt ?? null,
+      input.payload ?? null,
+    ],
+  );
+  return id;
+}
+
+async function upsertTaxRecord(
+  app: FastifyInstance,
+  input: {
+    invoiceId: string;
+    orgId: string;
+    provider: CheckoutProvider;
+    taxType: string;
+    jurisdiction: string;
+    rateBps?: number | null;
+    amountCents: number;
+    currency?: string | null;
+    payload?: unknown;
+  },
+): Promise<void> {
+  await app.db.query(
+    `
+      INSERT INTO billing_tax_records (
+        id,
+        invoice_id,
+        org_id,
+        provider,
+        tax_type,
+        jurisdiction,
+        rate_bps,
+        amount_cents,
+        currency,
+        payload_json
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, UPPER($9), $10)
+      ON CONFLICT (invoice_id, tax_type, jurisdiction) DO UPDATE
+      SET
+        rate_bps = EXCLUDED.rate_bps,
+        amount_cents = EXCLUDED.amount_cents,
+        currency = EXCLUDED.currency,
+        payload_json = COALESCE(EXCLUDED.payload_json, billing_tax_records.payload_json)
+    `,
+    [
+      uuidv4(),
+      input.invoiceId,
+      input.orgId,
+      input.provider,
+      input.taxType,
+      input.jurisdiction,
+      input.rateBps ?? null,
+      input.amountCents,
+      input.currency ?? null,
+      input.payload ?? null,
+    ],
+  );
+}
+
+async function upsertStripeInvoiceFromEvent(
+  app: FastifyInstance,
+  orgId: string,
+  eventType: string,
+  invoice: Stripe.Invoice,
+): Promise<void> {
+  const subscriptionRef =
+    typeof invoice.subscription === "string"
+      ? invoice.subscription
+      : invoice.subscription && "id" in invoice.subscription
+        ? String(invoice.subscription.id)
+        : null;
+
+  const paymentRef =
+    typeof invoice.payment_intent === "string"
+      ? invoice.payment_intent
+      : typeof invoice.charge === "string"
+        ? invoice.charge
+        : null;
+
+  const periodStart =
+    unixToDate((invoice as any).period_start as number | undefined) ??
+    unixToDate(invoice.lines?.data?.[0]?.period?.start ?? null);
+  const periodEnd =
+    unixToDate((invoice as any).period_end as number | undefined) ??
+    unixToDate(invoice.lines?.data?.[0]?.period?.end ?? null);
+
+  const taxCents = sumStripeTaxCents(invoice);
+  const invoiceId = await upsertInvoiceRecord(app, {
+    orgId,
+    provider: "stripe",
+    providerInvoiceId: invoice.id,
+    providerSubscriptionId: subscriptionRef,
+    providerPaymentId: paymentRef,
+    status: normalizeStripeInvoiceStatus(invoice.status, eventType),
+    currency: invoice.currency?.toUpperCase() ?? null,
+    subtotalCents: typeof invoice.subtotal === "number" ? invoice.subtotal : null,
+    taxCents,
+    totalCents: typeof invoice.total === "number" ? invoice.total : null,
+    amountDueCents: typeof invoice.amount_due === "number" ? invoice.amount_due : null,
+    amountPaidCents: typeof invoice.amount_paid === "number" ? invoice.amount_paid : null,
+    invoiceUrl: invoice.hosted_invoice_url ?? invoice.invoice_pdf ?? null,
+    periodStart,
+    periodEnd,
+    issuedAt: unixToDate(invoice.created),
+    dueAt: unixToDate(invoice.due_date),
+    paidAt: unixToDate(invoice.status_transitions?.paid_at ?? null),
+    payload: invoice,
+  });
+
+  if (taxCents && taxCents > 0) {
+    await upsertTaxRecord(app, {
+      invoiceId,
+      orgId,
+      provider: "stripe",
+      taxType: "provider_total_tax",
+      jurisdiction: "unknown",
+      amountCents: taxCents,
+      currency: invoice.currency?.toUpperCase() ?? null,
+      payload: {
+        total_tax_amounts: invoice.total_tax_amounts ?? [],
+      },
+    });
+  }
+}
+
+async function listOrgInvoices(
+  app: FastifyInstance,
+  orgId: string,
+  options: { status?: InvoiceStatus; limit: number },
+): Promise<BillingInvoiceRow[]> {
+  const result = await app.db.query<BillingInvoiceRow>(
+    `
+      SELECT
+        id,
+        org_id,
+        provider,
+        provider_invoice_id,
+        provider_subscription_id,
+        provider_payment_id,
+        status,
+        currency,
+        subtotal_cents,
+        tax_cents,
+        total_cents,
+        amount_due_cents,
+        amount_paid_cents,
+        invoice_url,
+        period_start,
+        period_end,
+        issued_at,
+        due_at,
+        paid_at,
+        created_at,
+        updated_at
+      FROM billing_invoices
+      WHERE org_id = $1
+        AND ($2::text IS NULL OR status = $2)
+      ORDER BY created_at DESC
+      LIMIT $3
+    `,
+    [orgId, options.status ?? null, options.limit],
+  );
+  return result.rows;
+}
+
+async function listTaxRecordsForInvoices(app: FastifyInstance, invoiceIds: string[]): Promise<BillingTaxRow[]> {
+  if (!invoiceIds.length) return [];
+  const taxes = await app.db.query<BillingTaxRow>(
+    `
+      SELECT
+        id,
+        invoice_id,
+        org_id,
+        provider,
+        tax_type,
+        jurisdiction,
+        rate_bps,
+        amount_cents,
+        currency,
+        created_at
+      FROM billing_tax_records
+      WHERE invoice_id = ANY($1::uuid[])
+      ORDER BY created_at DESC
+    `,
+    [invoiceIds],
+  );
+  return taxes.rows;
+}
+
 async function paypalAccessToken(app: FastifyInstance): Promise<string> {
   if (!app.env.PAYPAL_CLIENT_ID || !app.env.PAYPAL_CLIENT_SECRET) {
     throw new Error("PayPal credentials are missing");
@@ -518,7 +939,7 @@ async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Pr
     }
   }
 
-  if (event.type === "invoice.payment_failed" || event.type === "invoice.paid") {
+  if (event.type === "invoice.payment_failed" || event.type === "invoice.paid" || event.type === "invoice.finalized") {
     const invoice = event.data.object as Stripe.Invoice;
     const subscriptionRef =
       typeof invoice.subscription === "string"
@@ -532,6 +953,12 @@ async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Pr
       orgId = (await findOrgIdBySubscriptionRef(app, "stripe", subscriptionRef)) ?? "";
     }
     if (orgId) {
+      await upsertStripeInvoiceFromEvent(app, orgId, event.type, invoice);
+
+      if (event.type === "invoice.finalized") {
+        return;
+      }
+
       await recordFinanceEvent(app, {
         orgId,
         provider: "stripe",
@@ -865,6 +1292,102 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       );
 
       return { events: events.rows };
+    },
+  );
+
+  app.get(
+    "/invoices",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request) => {
+      const query = z
+        .object({
+          status: invoiceStatusSchema.optional(),
+          limit: z.coerce.number().int().min(1).max(500).default(50),
+          includeTax: z.coerce.boolean().optional().default(false),
+        })
+        .parse(request.query ?? {});
+
+      const invoices = await listOrgInvoices(app, request.authUser!.orgId, {
+        status: query.status,
+        limit: query.limit,
+      });
+
+      const taxRecords = query.includeTax ? await listTaxRecordsForInvoices(app, invoices.map((row) => row.id)) : [];
+      return { invoices, taxRecords };
+    },
+  );
+
+  app.get(
+    "/invoices/export",
+    {
+      preHandler: app.auth.requireAuth,
+    },
+    async (request, reply) => {
+      const query = z
+        .object({
+          status: invoiceStatusSchema.optional(),
+          limit: z.coerce.number().int().min(1).max(5000).default(2000),
+        })
+        .parse(request.query ?? {});
+
+      const invoices = await listOrgInvoices(app, request.authUser!.orgId, {
+        status: query.status,
+        limit: query.limit,
+      });
+
+      const csv = toCsv(
+        [
+          "id",
+          "provider",
+          "provider_invoice_id",
+          "provider_subscription_id",
+          "provider_payment_id",
+          "status",
+          "currency",
+          "subtotal_cents",
+          "tax_cents",
+          "total_cents",
+          "amount_due_cents",
+          "amount_paid_cents",
+          "invoice_url",
+          "period_start",
+          "period_end",
+          "issued_at",
+          "due_at",
+          "paid_at",
+          "created_at",
+          "updated_at",
+        ],
+        invoices.map((invoice) => ({
+          id: invoice.id,
+          provider: invoice.provider,
+          provider_invoice_id: invoice.provider_invoice_id,
+          provider_subscription_id: invoice.provider_subscription_id,
+          provider_payment_id: invoice.provider_payment_id,
+          status: invoice.status,
+          currency: invoice.currency,
+          subtotal_cents: invoice.subtotal_cents,
+          tax_cents: invoice.tax_cents,
+          total_cents: invoice.total_cents,
+          amount_due_cents: invoice.amount_due_cents,
+          amount_paid_cents: invoice.amount_paid_cents,
+          invoice_url: invoice.invoice_url,
+          period_start: invoice.period_start,
+          period_end: invoice.period_end,
+          issued_at: invoice.issued_at,
+          due_at: invoice.due_at,
+          paid_at: invoice.paid_at,
+          created_at: invoice.created_at,
+          updated_at: invoice.updated_at,
+        })),
+      );
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      reply.header("content-type", "text/csv; charset=utf-8");
+      reply.header("content-disposition", `attachment; filename="billing-invoices-${timestamp}.csv"`);
+      return reply.send(csv);
     },
   );
 
