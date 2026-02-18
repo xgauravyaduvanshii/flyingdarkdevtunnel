@@ -1,0 +1,28 @@
+# node
+node_modules
+.pnpm-store
+
+# env
+.env
+.env.*
+!.env.example
+
+# build
+.next
+dist
+coverage
+.turbo
+
+# logs
+*.log
+
+# go
+bin/
+
+# local state
+.data/
+
+# editor
+.vscode/
+.idea/
+.DS_Store

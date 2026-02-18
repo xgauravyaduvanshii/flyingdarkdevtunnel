@@ -1,0 +1,53 @@
+import { z } from "zod";
+
+export const planEntitlementsSchema = z.object({
+  maxTunnels: z.number().int().nonnegative(),
+  maxConcurrentConns: z.number().int().nonnegative(),
+  reservedDomains: z.boolean(),
+  customDomains: z.boolean(),
+  ipAllowlist: z.boolean(),
+  retentionHours: z.number().int().positive()
+});
+
+export type PlanEntitlements = z.infer<typeof planEntitlementsSchema>;
+
+export const tunnelRouteSchema = z.object({
+  id: z.string().uuid(),
+  protocol: z.enum(["http", "tcp", "https"]),
+  hostname: z.string().optional(),
+  pathPrefix: z.string().optional(),
+  target: z.string(),
+  inspect: z.boolean()
+});
+
+export type TunnelRoute = z.infer<typeof tunnelRouteSchema>;
+
+export const apiEnvSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  API_PORT: z.coerce.number().default(4000),
+  DATABASE_URL: z.string().min(1),
+  REDIS_URL: z.string().min(1),
+  JWT_SECRET: z.string().min(32),
+  JWT_REFRESH_SECRET: z.string().min(32),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
+  AGENT_JWT_SECRET: z.string().min(32),
+  S3_ENDPOINT: z.string().optional(),
+  S3_ACCESS_KEY: z.string().optional(),
+  S3_SECRET_KEY: z.string().optional(),
+  S3_BUCKET: z.string().optional(),
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  CLOUDFLARE_ZONE_ID: z.string().optional()
+});
+
+export type ApiEnv = z.infer<typeof apiEnvSchema>;
+
+export const relayEnvSchema = z.object({
+  RELAY_HTTP_PORT: z.coerce.number().default(8080),
+  RELAY_CONTROL_PORT: z.coerce.number().default(8081),
+  RELAY_BASE_DOMAIN: z.string().default("tunnel.yourdomain.com"),
+  RELAY_AGENT_JWT_SECRET: z.string().min(32)
+});
+
+export type RelayEnv = z.infer<typeof relayEnvSchema>;

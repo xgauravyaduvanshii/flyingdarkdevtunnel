@@ -1,0 +1,14 @@
+{
+  "name": "@fdt/eslint-config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./base.js"
+  },
+  "peerDependencies": {
+    "eslint": "^9.20.1",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.24.1"
+  }
+}

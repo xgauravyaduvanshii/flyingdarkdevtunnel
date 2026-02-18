@@ -1,0 +1,142 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: fdt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fdt
+    ports:
+      - "55432:5432"
+    volumes:
+      - fdt-postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: fdt-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: fdt-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - fdt-minio:/data
+
+  api:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/api dev"
+    environment:
+      NODE_ENV: development
+      API_PORT: 4000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: replace_with_at_least_32_characters_here
+      JWT_REFRESH_SECRET: replace_with_at_least_32_characters_here
+      AGENT_JWT_SECRET: replace_with_at_least_32_characters_here
+      BASE_DOMAIN: tunnel.yourdomain.com
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - redis
+
+  relay:
+    image: golang:1.22
+    working_dir: /workspace/go
+    volumes:
+      - ../../go:/workspace/go
+    command: sh -lc "go mod tidy && go run ./relay"
+    environment:
+      RELAY_HTTP_PORT: 8080
+      RELAY_CONTROL_PORT: 8081
+      RELAY_BASE_DOMAIN: tunnel.yourdomain.com
+      RELAY_AGENT_JWT_SECRET: replace_with_at_least_32_characters_here
+      RELAY_TCP_START_PORT: 7000
+      RELAY_TCP_END_PORT: 7099
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "7000-7099:7000-7099"
+    depends_on:
+      - api
+
+  console-web:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/console-web dev"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  docs-site:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/docs-site dev"
+    ports:
+      - "3001:3001"
+
+  worker-billing:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/worker-billing dev"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
+      BILLING_SYNC_INTERVAL_SECONDS: 60
+    depends_on:
+      - postgres
+
+  worker-inspector:
+    image: node:20
+    working_dir: /workspace
+    volumes:
+      - ../../:/workspace
+    command: sh -lc "pnpm install && pnpm --filter @fdt/worker-inspector dev"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/fdt
+      INSPECTOR_LOOP_INTERVAL_SECONDS: 15
+    depends_on:
+      - postgres
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fdt-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fdt-grafana
+    ports:
+      - "3100:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+volumes:
+  fdt-postgres:
+  fdt-minio:
