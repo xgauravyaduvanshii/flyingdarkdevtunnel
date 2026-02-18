@@ -47,6 +47,56 @@ type PaypalVerifyWebhookResponse = {
 type WebhookProvider = CheckoutProvider;
 type WebhookStoreStatus = "pending" | "processed" | "failed";
 
+type ReplayResult = {
+  id: string;
+  provider?: WebhookProvider;
+  status: "processed" | "failed" | "skipped";
+  message?: string;
+};
+
+const razorpayWebhookSchema = z
+  .object({
+    event: z.string(),
+    payload: z
+      .object({
+        subscription: z
+          .object({
+            entity: z
+              .object({
+                id: z.string(),
+                plan_id: z.string().optional(),
+                status: z.string().optional(),
+                customer_id: z.string().optional(),
+                notes: z.record(z.string()).optional(),
+              })
+              .passthrough(),
+          })
+          .optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+const paypalWebhookSchema = z
+  .object({
+    id: z.string().optional(),
+    event_type: z.string(),
+    resource: z
+      .object({
+        id: z.string().optional(),
+        plan_id: z.string().optional(),
+        status: z.string().optional(),
+        custom_id: z.string().optional(),
+        subscriber: z
+          .object({
+            payer_id: z.string().optional(),
+          })
+          .optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
 function headerValue(value: string | string[] | undefined): string | null {
   if (!value) return null;
   if (Array.isArray(value)) return value[0] ?? null;
@@ -94,14 +144,17 @@ async function startWebhookEvent(
   provider: WebhookProvider,
   eventId: string,
   payloadHash: string,
+  providerEventType: string | null,
+  payloadJson: unknown,
 ): Promise<{ duplicate: boolean; mismatch: boolean }> {
   const insert = await app.db.query(
     `
-      INSERT INTO billing_webhook_events (id, provider, event_id, payload_hash, status)
-      VALUES ($1, $2, $3, $4, 'pending')
+      INSERT INTO billing_webhook_events
+        (id, provider, event_id, provider_event_type, payload_hash, payload_json, status)
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending')
       ON CONFLICT (provider, event_id) DO NOTHING
     `,
-    [uuidv4(), provider, eventId, payloadHash],
+    [uuidv4(), provider, eventId, providerEventType, payloadHash, payloadJson ?? null],
   );
   if (insert.rowCount) {
     return { duplicate: false, mismatch: false };
@@ -330,6 +383,249 @@ async function verifyPaypalWebhook(
   return payload.verification_status === "SUCCESS";
 }
 
+async function processStripeEvent(app: FastifyInstance, event: Stripe.Event): Promise<void> {
+  if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") {
+    const sub = event.data.object as Stripe.Subscription;
+    let orgId = sub.metadata.orgId;
+    const priceId = sub.items.data[0]?.price.id;
+    if (!orgId) {
+      orgId = (await findOrgIdBySubscriptionRef(app, "stripe", sub.id)) ?? "";
+    }
+    if (orgId && priceId) {
+      const planId = await findPlanIdByExternalRef(app, "stripe", priceId);
+      if (planId) {
+        await upsertSubscriptionState(app, {
+          orgId,
+          provider: "stripe",
+          status: sub.status,
+          planId,
+          stripeSubscriptionId: sub.id,
+          externalCustomerId: sub.customer ? String(sub.customer) : null,
+        });
+        await applyEntitlementsFromPlan(app, orgId, planId);
+      }
+    }
+  }
+
+  if (event.type === "customer.subscription.deleted") {
+    const sub = event.data.object as Stripe.Subscription;
+    let orgId = sub.metadata.orgId;
+    if (!orgId) {
+      orgId = (await findOrgIdBySubscriptionRef(app, "stripe", sub.id)) ?? "";
+    }
+    if (orgId) {
+      await setFreePlan(app, orgId, "stripe", sub.status || "canceled");
+    }
+  }
+}
+
+async function processRazorpayWebhookPayload(
+  app: FastifyInstance,
+  payload: z.infer<typeof razorpayWebhookSchema>,
+): Promise<void> {
+  const entity = payload.payload.subscription?.entity;
+  if (!entity?.id) {
+    return;
+  }
+
+  let orgId = entity.notes?.orgId;
+  if (!orgId) {
+    orgId = (await findOrgIdBySubscriptionRef(app, "razorpay", entity.id)) ?? "";
+  }
+  if (!orgId) {
+    return;
+  }
+
+  const status = entity.status ?? payload.event;
+  const canceled =
+    ["subscription.cancelled", "subscription.halted"].includes(payload.event) ||
+    ["cancelled", "halted"].includes(status);
+  if (canceled) {
+    await setFreePlan(app, orgId, "razorpay", status);
+    return;
+  }
+
+  const planId = entity.plan_id ? await findPlanIdByExternalRef(app, "razorpay", entity.plan_id) : null;
+  await upsertSubscriptionState(app, {
+    orgId,
+    provider: "razorpay",
+    status,
+    planId,
+    razorpaySubscriptionId: entity.id,
+    externalCustomerId: entity.customer_id ?? null,
+  });
+  if (planId && ["subscription.activated", "subscription.charged", "subscription.authenticated"].includes(payload.event)) {
+    await applyEntitlementsFromPlan(app, orgId, planId);
+  }
+}
+
+async function processPaypalWebhookPayload(
+  app: FastifyInstance,
+  payload: z.infer<typeof paypalWebhookSchema>,
+): Promise<void> {
+  if (!payload.resource.id) {
+    return;
+  }
+
+  const subscriptionId = payload.resource.id;
+  const customId = payload.resource.custom_id ?? "";
+  let orgId = customId.split(":")[0];
+  if (!orgId) {
+    orgId = (await findOrgIdBySubscriptionRef(app, "paypal", subscriptionId)) ?? "";
+  }
+  if (!orgId) {
+    return;
+  }
+
+  const status = payload.resource.status ?? payload.event_type;
+  const canceledEvents = ["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.SUSPENDED", "BILLING.SUBSCRIPTION.EXPIRED"];
+  if (canceledEvents.includes(payload.event_type)) {
+    await setFreePlan(app, orgId, "paypal", status);
+    return;
+  }
+
+  const planId = payload.resource.plan_id ? await findPlanIdByExternalRef(app, "paypal", payload.resource.plan_id) : null;
+  await upsertSubscriptionState(app, {
+    orgId,
+    provider: "paypal",
+    status,
+    planId,
+    paypalSubscriptionId: subscriptionId,
+    externalCustomerId: payload.resource.subscriber?.payer_id ?? null,
+  });
+
+  const activeEvents = ["BILLING.SUBSCRIPTION.ACTIVATED", "BILLING.SUBSCRIPTION.UPDATED"];
+  if (planId && activeEvents.includes(payload.event_type)) {
+    await applyEntitlementsFromPlan(app, orgId, planId);
+  }
+}
+
+export async function replayWebhookEventById(
+  app: FastifyInstance,
+  id: string,
+  force: boolean,
+): Promise<ReplayResult> {
+  const row = await app.db.query<{
+    id: string;
+    provider: WebhookProvider;
+    status: "pending" | "processed" | "failed";
+    payload_json: unknown;
+  }>(
+    `
+      SELECT id, provider, status, payload_json
+      FROM billing_webhook_events
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [id],
+  );
+
+  const event = row.rows[0];
+  if (!event) {
+    return { id, status: "skipped", message: "event not found" };
+  }
+
+  if (event.status !== "failed" && !force) {
+    return { id: event.id, provider: event.provider, status: "skipped", message: "event is not failed (use force=true)" };
+  }
+  if (!event.payload_json || typeof event.payload_json !== "object") {
+    await app.db.query(
+      `
+        UPDATE billing_webhook_events
+        SET
+          status = 'failed',
+          attempts = attempts + 1,
+          replay_count = replay_count + 1,
+          last_error = 'payload_json missing for replay'
+        WHERE id = $1
+      `,
+      [event.id],
+    );
+    return { id: event.id, provider: event.provider, status: "failed", message: "payload_json missing for replay" };
+  }
+
+  try {
+    if (event.provider === "stripe") {
+      const stripeEvent = event.payload_json as Stripe.Event;
+      await processStripeEvent(app, stripeEvent);
+    } else if (event.provider === "razorpay") {
+      const parsed = razorpayWebhookSchema.safeParse(event.payload_json);
+      if (!parsed.success) {
+        throw new Error(`invalid razorpay payload: ${parsed.error.message}`);
+      }
+      await processRazorpayWebhookPayload(app, parsed.data);
+    } else {
+      const parsed = paypalWebhookSchema.safeParse(event.payload_json);
+      if (!parsed.success) {
+        throw new Error(`invalid paypal payload: ${parsed.error.message}`);
+      }
+      await processPaypalWebhookPayload(app, parsed.data);
+    }
+
+    await app.db.query(
+      `
+        UPDATE billing_webhook_events
+        SET
+          status = 'processed',
+          processed_at = NOW(),
+          attempts = attempts + 1,
+          replay_count = replay_count + 1,
+          last_error = NULL
+        WHERE id = $1
+      `,
+      [event.id],
+    );
+
+    return { id: event.id, provider: event.provider, status: "processed" };
+  } catch (error) {
+    await app.db.query(
+      `
+        UPDATE billing_webhook_events
+        SET
+          status = 'failed',
+          attempts = attempts + 1,
+          replay_count = replay_count + 1,
+          last_error = $2
+        WHERE id = $1
+      `,
+      [event.id, String(error)],
+    );
+    return { id: event.id, provider: event.provider, status: "failed", message: String(error) };
+  }
+}
+
+export async function reconcileFailedWebhookEvents(
+  app: FastifyInstance,
+  options: { provider?: WebhookProvider; limit: number; force: boolean },
+): Promise<{ attempted: number; processed: number; failed: number; skipped: number; results: ReplayResult[] }> {
+  const rows = await app.db.query<{ id: string }>(
+    `
+      SELECT id
+      FROM billing_webhook_events
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::bool OR status = 'failed')
+      ORDER BY received_at ASC
+      LIMIT $3
+    `,
+    [options.provider ?? null, options.force, options.limit],
+  );
+
+  const results: ReplayResult[] = [];
+  let processed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const row of rows.rows) {
+    const result = await replayWebhookEventById(app, row.id, options.force);
+    results.push(result);
+    if (result.status === "processed") processed += 1;
+    else if (result.status === "failed") failed += 1;
+    else skipped += 1;
+  }
+
+  return { attempted: rows.rows.length, processed, failed, skipped, results };
+}
+
 export const billingRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     "/checkout-session",
@@ -523,7 +819,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
 
     const eventId = normalizeEventId("stripe", event.id, rawBody);
     const payloadHash = sha256Hex(rawBody);
-    const start = await startWebhookEvent(app, "stripe", eventId, payloadHash);
+    const start = await startWebhookEvent(app, "stripe", eventId, payloadHash, event.type, request.body ?? {});
     if (start.mismatch) {
       return reply.code(409).send({ message: "Conflicting duplicate Stripe event payload" });
     }
@@ -532,39 +828,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") {
-        const sub = event.data.object as Stripe.Subscription;
-        let orgId = sub.metadata.orgId;
-        const priceId = sub.items.data[0]?.price.id;
-        if (!orgId) {
-          orgId = (await findOrgIdBySubscriptionRef(app, "stripe", sub.id)) ?? "";
-        }
-        if (orgId && priceId) {
-          const planId = await findPlanIdByExternalRef(app, "stripe", priceId);
-          if (planId) {
-            await upsertSubscriptionState(app, {
-              orgId,
-              provider: "stripe",
-              status: sub.status,
-              planId,
-              stripeSubscriptionId: sub.id,
-              externalCustomerId: sub.customer ? String(sub.customer) : null,
-            });
-            await applyEntitlementsFromPlan(app, orgId, planId);
-          }
-        }
-      }
-
-      if (event.type === "customer.subscription.deleted") {
-        const sub = event.data.object as Stripe.Subscription;
-        let orgId = sub.metadata.orgId;
-        if (!orgId) {
-          orgId = (await findOrgIdBySubscriptionRef(app, "stripe", sub.id)) ?? "";
-        }
-        if (orgId) {
-          await setFreePlan(app, orgId, "stripe", sub.status || "canceled");
-        }
-      }
+      await processStripeEvent(app, event);
 
       await finishWebhookEvent(app, "stripe", eventId, "processed");
       return { ok: true };
@@ -591,29 +855,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const parsed = z
-      .object({
-        event: z.string(),
-        payload: z
-          .object({
-            subscription: z
-              .object({
-                entity: z
-                  .object({
-                    id: z.string(),
-                    plan_id: z.string().optional(),
-                    status: z.string().optional(),
-                    customer_id: z.string().optional(),
-                    notes: z.record(z.string()).optional(),
-                  })
-                  .passthrough(),
-              })
-              .optional(),
-          })
-          .passthrough(),
-      })
-      .passthrough()
-      .safeParse(request.body ?? {});
+    const parsed = razorpayWebhookSchema.safeParse(request.body ?? {});
 
     if (!parsed.success) {
       return { ok: true, ignored: true };
@@ -622,7 +864,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     const headerEventId = headerValue(request.headers["x-razorpay-event-id"]);
     const eventId = normalizeEventId("razorpay", headerEventId, rawBody);
     const payloadHash = sha256Hex(rawBody);
-    const start = await startWebhookEvent(app, "razorpay", eventId, payloadHash);
+    const start = await startWebhookEvent(app, "razorpay", eventId, payloadHash, parsed.data.event, parsed.data);
     if (start.mismatch) {
       return reply.code(409).send({ message: "Conflicting duplicate Razorpay event payload" });
     }
@@ -631,43 +873,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      const entity = parsed.data.payload.subscription?.entity;
-      if (!entity?.id) {
-        await finishWebhookEvent(app, "razorpay", eventId, "processed");
-        return { ok: true, ignored: true };
-      }
-
-      let orgId = entity.notes?.orgId;
-      if (!orgId) {
-        orgId = (await findOrgIdBySubscriptionRef(app, "razorpay", entity.id)) ?? "";
-      }
-      if (!orgId) {
-        await finishWebhookEvent(app, "razorpay", eventId, "processed");
-        return { ok: true, ignored: true };
-      }
-
-      const status = entity.status ?? parsed.data.event;
-      const canceled =
-        ["subscription.cancelled", "subscription.halted"].includes(parsed.data.event) ||
-        ["cancelled", "halted"].includes(status);
-      if (canceled) {
-        await setFreePlan(app, orgId, "razorpay", status);
-        await finishWebhookEvent(app, "razorpay", eventId, "processed");
-        return { ok: true };
-      }
-
-      const planId = entity.plan_id ? await findPlanIdByExternalRef(app, "razorpay", entity.plan_id) : null;
-      await upsertSubscriptionState(app, {
-        orgId,
-        provider: "razorpay",
-        status,
-        planId,
-        razorpaySubscriptionId: entity.id,
-        externalCustomerId: entity.customer_id ?? null,
-      });
-      if (planId && ["subscription.activated", "subscription.charged", "subscription.authenticated"].includes(parsed.data.event)) {
-        await applyEntitlementsFromPlan(app, orgId, planId);
-      }
+      await processRazorpayWebhookPayload(app, parsed.data);
 
       await finishWebhookEvent(app, "razorpay", eventId, "processed");
       return { ok: true };
@@ -692,26 +898,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const parsed = z
-      .object({
-        id: z.string().optional(),
-        event_type: z.string(),
-        resource: z
-          .object({
-            id: z.string().optional(),
-            plan_id: z.string().optional(),
-            status: z.string().optional(),
-            custom_id: z.string().optional(),
-            subscriber: z
-              .object({
-                payer_id: z.string().optional(),
-              })
-              .optional(),
-          })
-          .passthrough(),
-      })
-      .passthrough()
-      .safeParse(request.body ?? {});
+    const parsed = paypalWebhookSchema.safeParse(request.body ?? {});
 
     if (!parsed.success) {
       return { ok: true, ignored: true };
@@ -719,7 +906,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
 
     const eventId = normalizeEventId("paypal", parsed.data.id ?? headerValue(request.headers["paypal-transmission-id"]), rawBody);
     const payloadHash = sha256Hex(rawBody);
-    const start = await startWebhookEvent(app, "paypal", eventId, payloadHash);
+    const start = await startWebhookEvent(app, "paypal", eventId, payloadHash, parsed.data.event_type, parsed.data);
     if (start.mismatch) {
       return reply.code(409).send({ message: "Conflicting duplicate PayPal event payload" });
     }
@@ -728,46 +915,7 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      if (!parsed.data.resource.id) {
-        await finishWebhookEvent(app, "paypal", eventId, "processed");
-        return { ok: true, ignored: true };
-      }
-
-      const subscriptionId = parsed.data.resource.id;
-      const customId = parsed.data.resource.custom_id ?? "";
-      let orgId = customId.split(":")[0];
-      if (!orgId) {
-        orgId = (await findOrgIdBySubscriptionRef(app, "paypal", subscriptionId)) ?? "";
-      }
-      if (!orgId) {
-        await finishWebhookEvent(app, "paypal", eventId, "processed");
-        return { ok: true, ignored: true };
-      }
-
-      const status = parsed.data.resource.status ?? parsed.data.event_type;
-      const canceledEvents = ["BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.SUSPENDED", "BILLING.SUBSCRIPTION.EXPIRED"];
-      if (canceledEvents.includes(parsed.data.event_type)) {
-        await setFreePlan(app, orgId, "paypal", status);
-        await finishWebhookEvent(app, "paypal", eventId, "processed");
-        return { ok: true };
-      }
-
-      const planId = parsed.data.resource.plan_id
-        ? await findPlanIdByExternalRef(app, "paypal", parsed.data.resource.plan_id)
-        : null;
-      await upsertSubscriptionState(app, {
-        orgId,
-        provider: "paypal",
-        status,
-        planId,
-        paypalSubscriptionId: subscriptionId,
-        externalCustomerId: parsed.data.resource.subscriber?.payer_id ?? null,
-      });
-
-      const activeEvents = ["BILLING.SUBSCRIPTION.ACTIVATED", "BILLING.SUBSCRIPTION.UPDATED"];
-      if (planId && activeEvents.includes(parsed.data.event_type)) {
-        await applyEntitlementsFromPlan(app, orgId, planId);
-      }
+      await processPaypalWebhookPayload(app, parsed.data);
 
       await finishWebhookEvent(app, "paypal", eventId, "processed");
       return { ok: true };

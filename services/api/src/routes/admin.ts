@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { reconcileFailedWebhookEvents, replayWebhookEventById } from "./billing.js";
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.auth.requireAdmin);
@@ -73,9 +74,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         id,
         provider,
         event_id,
+        provider_event_type,
         payload_hash,
         status,
         attempts,
+        replay_count,
         received_at,
         processed_at,
         last_error
@@ -110,6 +113,54 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       events: events.rows,
       stats: stats.rows[0] ?? { total: "0", pending: "0", processed: "0", failed: "0", stale_pending: "0" },
     };
+  });
+
+  app.post("/billing-webhooks/:id/replay", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ force: z.boolean().optional().default(false) }).parse(request.body ?? {});
+
+    const result = await replayWebhookEventById(app, params.id, body.force);
+    if (result.status === "skipped") {
+      return reply.code(409).send({ message: result.message ?? "Replay skipped", result });
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_webhook.replay",
+      entityType: "billing_webhook_event",
+      entityId: params.id,
+      metadata: { force: body.force, replayResult: result },
+    });
+
+    return { ok: true, result };
+  });
+
+  app.post("/billing-webhooks/reconcile", async (request) => {
+    const body = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(50),
+        force: z.boolean().optional().default(false),
+      })
+      .parse(request.body ?? {});
+
+    const summary = await reconcileFailedWebhookEvents(app, {
+      provider: body.provider,
+      limit: body.limit,
+      force: body.force,
+    });
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_webhook.reconcile",
+      entityType: "billing_webhook_event",
+      entityId: body.provider ?? "all",
+      metadata: { limit: body.limit, force: body.force, summary: { ...summary, results: undefined } },
+    });
+
+    return { ok: true, ...summary };
   });
 
   app.patch("/users/:id/plan", async (request, reply) => {

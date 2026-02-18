@@ -10,9 +10,11 @@ type BillingWebhookEventRow = {
   id: string;
   provider: Provider;
   event_id: string;
+  provider_event_type: string | null;
   payload_hash: string;
   status: Status;
   attempts: number;
+  replay_count: number;
   received_at: string;
   processed_at: string | null;
   last_error: string | null;
@@ -37,6 +39,7 @@ export default function AdminBillingWebhooksPage() {
   });
   const [provider, setProvider] = useState<Provider | "all">("all");
   const [status, setStatus] = useState<Status | "all">("all");
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   const query = useMemo(() => {
@@ -63,6 +66,48 @@ export default function AdminBillingWebhooksPage() {
   useEffect(() => {
     void load();
   }, [query]);
+
+  async function replayOne(id: string, force = false) {
+    setBusy(true);
+    try {
+      const result = await api<{ ok: boolean; result: { status: string; message?: string } }>(
+        `/v1/admin/billing-webhooks/${id}/replay`,
+        { method: "POST", body: JSON.stringify({ force }) },
+      );
+      setMessage(`Replay result: ${result.result.status}${result.result.message ? ` (${result.result.message})` : ""}`);
+      await load();
+    } catch (error) {
+      setMessage(`Replay failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reconcileFailed() {
+    setBusy(true);
+    try {
+      const payload: { provider?: Provider; limit: number; force: boolean } = { limit: 100, force: false };
+      if (provider !== "all") payload.provider = provider;
+      const summary = await api<{
+        ok: boolean;
+        attempted: number;
+        processed: number;
+        failed: number;
+        skipped: number;
+      }>("/v1/admin/billing-webhooks/reconcile", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setMessage(
+        `Reconcile done: attempted=${summary.attempted}, processed=${summary.processed}, failed=${summary.failed}, skipped=${summary.skipped}`,
+      );
+      await load();
+    } catch (error) {
+      setMessage(`Reconcile failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <section className="card">
@@ -91,6 +136,9 @@ export default function AdminBillingWebhooksPage() {
           <option value="failed">Failed</option>
         </select>
         <button onClick={() => void load()}>Refresh</button>
+        <button onClick={() => void reconcileFailed()} disabled={busy}>
+          Reconcile Failed
+        </button>
       </div>
 
       <table className="table">
@@ -98,11 +146,14 @@ export default function AdminBillingWebhooksPage() {
           <tr>
             <th>Time</th>
             <th>Provider</th>
+            <th>Type</th>
             <th>Status</th>
             <th>Attempts</th>
+            <th>Replays</th>
             <th>Event ID</th>
             <th>Processed</th>
             <th>Error</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -110,11 +161,22 @@ export default function AdminBillingWebhooksPage() {
             <tr key={row.id}>
               <td>{new Date(row.received_at).toLocaleString()}</td>
               <td>{row.provider}</td>
+              <td>{row.provider_event_type ?? "-"}</td>
               <td>{row.status}</td>
               <td>{row.attempts}</td>
+              <td>{row.replay_count}</td>
               <td style={{ maxWidth: 240, whiteSpace: "normal", wordBreak: "break-all" }}>{row.event_id}</td>
               <td>{row.processed_at ? new Date(row.processed_at).toLocaleString() : "-"}</td>
               <td style={{ maxWidth: 320, whiteSpace: "normal" }}>{row.last_error ?? "-"}</td>
+              <td>
+                {row.status === "failed" ? (
+                  <button className="button secondary" disabled={busy} onClick={() => void replayOne(row.id)}>
+                    Replay
+                  </button>
+                ) : (
+                  "-"
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

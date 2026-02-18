@@ -17,6 +17,12 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Billing replay automation + alert routing:
+  - Added admin replay endpoint for individual failed webhook events.
+  - Added admin reconcile endpoint for batch replay by provider.
+  - Added payload-backed replay metadata (`provider_event_type`, `payload_json`, `replay_count`).
+  - Added worker-based provider alert webhook routing with cooldown controls.
+  - Added integration coverage for replay/reconcile admin operations.
 - Billing operations tooling:
   - Added admin billing webhook events endpoint and filtered visibility (`/v1/admin/billing-webhooks`).
   - Added admin console billing ops page with summary stats and provider/status filters.
@@ -66,8 +72,8 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
   - Add cert-expiry alerting and on-call runbooks.
 - Payment production hardening:
-  - Add provider-specific alerting thresholds routed to external alerting channels.
-  - Add runbook automation for replay/reconciliation of failed events.
+  - Add signed runbook triggers to replay by provider/event class automatically.
+  - Add dashboard SLOs and paging policies for webhook processing latency.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:

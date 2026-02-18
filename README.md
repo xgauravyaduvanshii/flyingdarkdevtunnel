@@ -109,6 +109,9 @@ bash scripts/integration-smoke.sh
 - If provider keys are absent, API returns safe mock checkout URLs for local/dev.
 - Webhook security includes raw-body signature verification + idempotency event store (`billing_webhook_events`).
 - Admin billing ops endpoint: `GET /v1/admin/billing-webhooks`.
+- Replay/reconcile endpoints:
+  - `POST /v1/admin/billing-webhooks/:id/replay`
+  - `POST /v1/admin/billing-webhooks/reconcile`
 
 ## Example multi-tunnel config
 

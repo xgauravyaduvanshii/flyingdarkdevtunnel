@@ -128,14 +128,29 @@ const statements = [
     id UUID PRIMARY KEY,
     provider TEXT NOT NULL CHECK (provider IN ('stripe', 'razorpay', 'paypal')),
     event_id TEXT NOT NULL,
+    provider_event_type TEXT,
     payload_hash TEXT NOT NULL,
+    payload_json JSONB,
     status TEXT NOT NULL CHECK (status IN ('pending', 'processed', 'failed')),
     attempts INTEGER NOT NULL DEFAULT 1,
+    replay_count INTEGER NOT NULL DEFAULT 0,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMPTZ,
     last_error TEXT,
     UNIQUE(provider, event_id)
   );
+  `,
+  `
+  ALTER TABLE billing_webhook_events
+  ADD COLUMN IF NOT EXISTS provider_event_type TEXT;
+  `,
+  `
+  ALTER TABLE billing_webhook_events
+  ADD COLUMN IF NOT EXISTS payload_json JSONB;
+  `,
+  `
+  ALTER TABLE billing_webhook_events
+  ADD COLUMN IF NOT EXISTS replay_count INTEGER NOT NULL DEFAULT 0;
   `,
   `
   CREATE INDEX IF NOT EXISTS idx_billing_webhook_events_received_at

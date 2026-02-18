@@ -67,5 +67,17 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 ## Admin operations
 - Admin API:
   - `GET /v1/admin/billing-webhooks?provider=&status=&limit=`
+  - `POST /v1/admin/billing-webhooks/:id/replay`
+  - `POST /v1/admin/billing-webhooks/reconcile`
 - Admin UI:
   - `apps/console-web/app/admin/billing-webhooks/page.tsx`
+
+## Replay and reconciliation
+- Failed webhook events can be replayed from stored payloads.
+- Reconcile endpoint can batch replay failed events by provider/limit.
+- Replay metadata is tracked in `billing_webhook_events.replay_count`.
+
+## External alerting
+- Worker can send provider-scoped warning alerts to a webhook:
+  - `BILLING_ALERT_WEBHOOK_URL`
+  - `BILLING_ALERT_COOLDOWN_SECONDS`
