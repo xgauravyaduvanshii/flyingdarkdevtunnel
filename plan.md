@@ -160,26 +160,53 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Added admin UI pages/controls:
     - cert event operations (`apps/console-web/app/admin/cert-events/page.tsx`)
     - billing export reconcile + retry visibility enhancements.
+- Queue implementation continuation (this update):
+  - Added SCIM-style provisioning and role-template management:
+    - `GET|PUT|DELETE /v1/admin/role-templates*`
+    - `POST /v1/admin/scim/provision/users`
+    - `GET /v1/admin/scim/provision/events`
+    - new data models: `org_role_templates`, `scim_provisioning_events`
+  - Added admin security operations for rotation posture:
+    - `GET /v1/admin/secrets/rotation-health`
+    - `POST /v1/admin/secrets/rotation/scan`
+    - `services/api/src/scripts/verify-secret-rotations.ts`
+  - Added certificate worker automated DLQ replay policy:
+    - env controls for replay cooldown/age/max-replays
+    - replay counter/timestamp tracking on `certificate_lifecycle_events`
+    - worker metric `fdt_cert_dlq_auto_replays_total`
+  - Added operations automation workflows:
+    - weekly secret rotation verification workflow
+    - nightly chaos drill workflow (`scripts/chaos-drill.sh`)
+  - Stabilized integration coverage for adaptive abuse blocking by isolating login tests with per-test source IPs.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Event-driven issuance/renewal status integration shipped with per-source/per-cluster provenance verification.
   - Renewal SLA escalation shipped with environment-aware incident routing (`dev|staging|prod`) and new alert classes.
-  - DLQ replay and cert-region summary shipped; active-active cross-region replication remains.
+  - DLQ replay and cert-region summary shipped; active-active cross-region replication and cert-manager callback depth remain.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
   - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
   - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`).
   - Export retry/reconciliation pipeline shipped; production retry tuning remains telemetry-driven.
+- Enterprise controls:
+  - Team/org RBAC, role templates, and SCIM-style provisioning event tracking shipped.
+  - SSO provider config scaffold shipped; IdP onboarding/enforcement depth remains.
 - Observability operations:
   - Relay active/inflight/rejection metrics and alert rules are live.
   - Grafana auto-provisioned dashboard shipped (`infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`).
+- Performance and resilience:
+  - Nightly chaos drill workflow + script shipped for relay/API/redis fault drills.
+  - Threshold tuning and additional failure-mode assertions remain.
+- Security hardening:
+  - Token revoke list, anomaly store, and scheduled rotation verification are shipped.
+  - Non-auth adaptive anomaly controls and richer abuse decisioning remain.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
    - Add multi-region cert-state replication for active-active relay topologies.
-   - Add automated DLQ replay policies and incident escalation tiers.
+   - Add issuance/renewal callback ingestion depth and incident escalation tiers.
 2. Payment hardening + finance ops:
    - Tune provider retry/dunning policy by live payment telemetry and recovery outcomes.
    - Add sink delivery acknowledgement tracking and external reconciliation sinks.
@@ -187,13 +214,13 @@ Phase 1 (MVP hardening + production readiness improvements)
    - Expand beyond US with region capacity planning and failover policy drills.
 4. Enterprise controls:
    - SAML/OIDC IdP onboarding and enforcement flows.
-   - SCIM-style org provisioning and advanced role templates.
+   - Expand SCIM provisioning to external identity-source mappings and drift reconciliation.
 5. Performance and resilience:
   - Continue tightening nightly resilience thresholds per environment baseline.
-  - Add chaos experiments for relay/API/Redis dependency failures.
+  - Add broader chaos scenarios for network partitions and control-plane dependency loss.
 6. Security hardening:
    - Expand anomaly detection into adaptive abuse/rate-limit decisions across non-auth endpoints.
-   - Add periodic secret-rotation automation and verification jobs.
+   - Add token-rotation orchestration for API/service credentials with rollback-safe runbooks.
 
 ## Definition of Done (for current hardening track)
 - Domain verification + routing + TLS mode APIs are stable. `Complete`

@@ -1,0 +1,45 @@
+name: Security Rotation Weekly
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  verify-secret-rotations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fdt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fdt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Verify secret rotation health
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fdt
+          SECRET_ROTATION_MAX_AGE_DAYS: 90
+          SECRET_ROTATION_ENFORCE: "true"
+        run: pnpm --filter @fdt/api verify:secret-rotations

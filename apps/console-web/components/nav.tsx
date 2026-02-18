@@ -11,6 +11,8 @@ const links = [
   ["/billing", "Billing"],
   ["/admin/users", "Admin"],
   ["/admin/members", "Team"],
+  ["/admin/role-templates", "Role Templates"],
+  ["/admin/scim", "SCIM Provision"],
   ["/admin/sso", "SSO"],
   ["/admin/domains", "Domains Admin"],
   ["/admin/billing-webhooks", "Billing Ops"],

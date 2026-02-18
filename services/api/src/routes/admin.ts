@@ -26,6 +26,15 @@ function toCsv(headers: string[], rows: Array<Record<string, unknown>>): string 
   return `${lines.join("\n")}\n`;
 }
 
+function normalizeTemplateKey(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.auth.requireAdmin);
 
@@ -153,6 +162,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         e.event_type,
         e.status,
         e.retry_count,
+        e.dlq_replay_count,
+        e.last_dlq_replayed_at,
         e.next_retry_at,
         e.last_error,
         e.provenance_subject,
@@ -634,6 +645,327 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
+  app.get("/role-templates", async (request) => {
+    const templates = await app.db.query(
+      `
+      SELECT id, org_id, template_key, role, description, metadata_json, created_at, updated_at
+      FROM org_role_templates
+      WHERE org_id = $1
+      ORDER BY template_key ASC
+    `,
+      [request.authUser!.orgId],
+    );
+
+    return {
+      templates: templates.rows,
+      defaults: [{ template_key: "default", role: "member", description: "Fallback role when no template/role is provided" }],
+    };
+  });
+
+  app.put("/role-templates/:templateKey", async (request, reply) => {
+    const params = z.object({ templateKey: z.string().min(1).max(64) }).parse(request.params ?? {});
+    const body = z
+      .object({
+        role: orgRoleSchema,
+        description: z.string().max(300).optional(),
+        metadata: z.record(z.unknown()).optional(),
+      })
+      .parse(request.body ?? {});
+
+    const templateKey = normalizeTemplateKey(params.templateKey);
+    if (!templateKey) {
+      return reply.code(400).send({ message: "Invalid template key" });
+    }
+    if (body.role === "owner" && request.authUser!.role !== "owner") {
+      return reply.code(403).send({ message: "Only owners can create owner role templates" });
+    }
+
+    await app.db.query(
+      `
+      INSERT INTO org_role_templates (id, org_id, template_key, role, description, metadata_json, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (org_id, template_key) DO UPDATE
+      SET
+        role = EXCLUDED.role,
+        description = EXCLUDED.description,
+        metadata_json = EXCLUDED.metadata_json,
+        updated_at = NOW()
+    `,
+      [uuidv4(), request.authUser!.orgId, templateKey, body.role, body.description ?? null, body.metadata ?? null],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.role_template.upsert",
+      entityType: "org_role_template",
+      entityId: templateKey,
+      metadata: { role: body.role, description: body.description ?? null },
+    });
+
+    return { ok: true, templateKey, role: body.role };
+  });
+
+  app.delete("/role-templates/:templateKey", async (request, reply) => {
+    const params = z.object({ templateKey: z.string().min(1).max(64) }).parse(request.params ?? {});
+    const templateKey = normalizeTemplateKey(params.templateKey);
+    if (!templateKey) {
+      return reply.code(400).send({ message: "Invalid template key" });
+    }
+
+    const deleted = await app.db.query(
+      `DELETE FROM org_role_templates WHERE org_id = $1 AND template_key = $2`,
+      [request.authUser!.orgId, templateKey],
+    );
+    if (!deleted.rowCount) {
+      return reply.code(404).send({ message: "Role template not found" });
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.role_template.delete",
+      entityType: "org_role_template",
+      entityId: templateKey,
+    });
+
+    return { ok: true, templateKey };
+  });
+
+  app.get("/scim/provision/events", async (request) => {
+    const query = z
+      .object({
+        status: z.enum(["applied", "skipped", "failed"]).optional(),
+        action: z.enum(["upsert", "deactivate", "delete"]).optional(),
+        email: z.string().email().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const events = await app.db.query(
+      `
+      SELECT
+        id,
+        org_id,
+        actor_user_id,
+        external_id,
+        email,
+        template_key,
+        requested_role,
+        resolved_role,
+        action,
+        status,
+        details,
+        created_at
+      FROM scim_provisioning_events
+      WHERE org_id = $1
+        AND ($2::text IS NULL OR status = $2)
+        AND ($3::text IS NULL OR action = $3)
+        AND ($4::text IS NULL OR email = LOWER($4))
+      ORDER BY created_at DESC
+      LIMIT $5
+    `,
+      [request.authUser!.orgId, query.status ?? null, query.action ?? null, query.email ?? null, query.limit],
+    );
+
+    return { events: events.rows };
+  });
+
+  app.post("/scim/provision/users", async (request) => {
+    const body = z
+      .object({
+        operations: z
+          .array(
+            z.object({
+              externalId: z.string().max(200).optional(),
+              email: z.string().email(),
+              active: z.boolean().optional().default(true),
+              templateKey: z.string().max(64).optional(),
+              role: orgRoleSchema.optional(),
+            }),
+          )
+          .min(1)
+          .max(500),
+      })
+      .parse(request.body ?? {});
+
+    const requestedTemplateKeys = Array.from(
+      new Set(
+        body.operations
+          .map((operation) => operation.templateKey)
+          .filter((key): key is string => Boolean(key))
+          .map((key) => normalizeTemplateKey(key)),
+      ),
+    );
+    const templateRows = requestedTemplateKeys.length
+      ? await app.db.query<{ template_key: string; role: z.infer<typeof orgRoleSchema> }>(
+          `
+            SELECT template_key, role
+            FROM org_role_templates
+            WHERE org_id = $1
+              AND template_key = ANY($2::text[])
+          `,
+          [request.authUser!.orgId, requestedTemplateKeys],
+        )
+      : { rows: [] as Array<{ template_key: string; role: z.infer<typeof orgRoleSchema> }> };
+    const templateMap = new Map(templateRows.rows.map((row) => [row.template_key, row.role]));
+
+    const results: Array<{
+      email: string;
+      action: "upsert" | "deactivate";
+      status: "applied" | "skipped" | "failed";
+      role: z.infer<typeof orgRoleSchema> | null;
+      message: string;
+      userId?: string;
+    }> = [];
+
+    for (const operation of body.operations) {
+      const email = operation.email.trim().toLowerCase();
+      const action: "upsert" | "deactivate" = operation.active === false ? "deactivate" : "upsert";
+      const templateKey = operation.templateKey ? normalizeTemplateKey(operation.templateKey) : null;
+      const templateRole = templateKey ? templateMap.get(templateKey) : undefined;
+      const resolvedRole = operation.role ?? templateRole ?? "member";
+
+      let status: "applied" | "skipped" | "failed" = "applied";
+      let message = "applied";
+      let userId: string | undefined;
+
+      try {
+        if (resolvedRole === "owner" && request.authUser!.role !== "owner") {
+          status = "failed";
+          message = "Only owners can provision owner role";
+        } else if (action === "deactivate") {
+          const membership = await app.db.query<{ user_id: string; role: string }>(
+            `
+              SELECT m.user_id, m.role
+              FROM memberships m
+              JOIN users u ON u.id = m.user_id
+              WHERE m.org_id = $1 AND u.email = $2
+              LIMIT 1
+            `,
+            [request.authUser!.orgId, email],
+          );
+
+          if (!membership.rowCount || !membership.rows[0]) {
+            status = "skipped";
+            message = "User is not currently a member";
+          } else {
+            userId = membership.rows[0].user_id;
+            if (membership.rows[0].role === "owner") {
+              if (request.authUser!.role !== "owner") {
+                status = "failed";
+                message = "Only owners can deactivate owner memberships";
+              } else {
+                const owners = await app.db.query<{ count: string }>(
+                  `SELECT COUNT(*)::text AS count FROM memberships WHERE org_id = $1 AND role = 'owner'`,
+                  [request.authUser!.orgId],
+                );
+                const ownerCount = Number.parseInt(owners.rows[0]?.count ?? "0", 10);
+                if (ownerCount <= 1) {
+                  status = "failed";
+                  message = "Cannot deactivate the last owner";
+                }
+              }
+            }
+
+            if (status === "applied") {
+              await app.db.query(`DELETE FROM memberships WHERE user_id = $1 AND org_id = $2`, [userId, request.authUser!.orgId]);
+              message = "Membership deactivated";
+            }
+          }
+        } else {
+          const existingUser = await app.db.query<{ id: string }>(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [email]);
+          if (existingUser.rowCount && existingUser.rows[0]) {
+            userId = existingUser.rows[0].id;
+          } else {
+            userId = uuidv4();
+            const placeholderPasswordHash = await argon2.hash(randomToken(24));
+            const placeholderAuthtokenHash = await argon2.hash(randomToken(24));
+            await app.db.query(
+              `INSERT INTO users (id, email, password_hash, authtoken_hash) VALUES ($1, $2, $3, $4)`,
+              [userId, email, placeholderPasswordHash, placeholderAuthtokenHash],
+            );
+          }
+
+          await app.db.query(
+            `
+              INSERT INTO memberships (id, user_id, org_id, role)
+              VALUES ($1, $2, $3, $4)
+              ON CONFLICT (user_id, org_id) DO UPDATE
+              SET role = EXCLUDED.role
+            `,
+            [uuidv4(), userId, request.authUser!.orgId, resolvedRole],
+          );
+          message = "Membership upserted";
+        }
+      } catch (error) {
+        status = "failed";
+        message = String(error);
+      }
+
+      await app.db.query(
+        `
+          INSERT INTO scim_provisioning_events (
+            id,
+            org_id,
+            actor_user_id,
+            external_id,
+            email,
+            template_key,
+            requested_role,
+            resolved_role,
+            action,
+            status,
+            details
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `,
+        [
+          uuidv4(),
+          request.authUser!.orgId,
+          request.authUser!.userId,
+          operation.externalId ?? null,
+          email,
+          templateKey,
+          operation.role ?? null,
+          resolvedRole ?? null,
+          action,
+          status,
+          {
+            message,
+            userId: userId ?? null,
+            templateRole: templateRole ?? null,
+          },
+        ],
+      );
+
+      results.push({
+        email,
+        action,
+        status,
+        role: action === "upsert" ? resolvedRole : null,
+        message,
+        userId,
+      });
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.scim.provision.users",
+      entityType: "scim_provisioning_events",
+      entityId: "bulk",
+      metadata: {
+        total: results.length,
+        applied: results.filter((row) => row.status === "applied").length,
+        failed: results.filter((row) => row.status === "failed").length,
+        skipped: results.filter((row) => row.status === "skipped").length,
+      },
+    });
+
+    return { ok: true, results };
+  });
+
   app.get("/sso", async (request) => {
     const sso = await app.db.query(
       `
@@ -762,6 +1094,125 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return { ok: true, userId: targetUserId, authtoken: rawAuthtoken };
+  });
+
+  app.get("/secrets/rotation-health", async (request) => {
+    const query = z
+      .object({
+        maxAgeDays: z.coerce.number().int().positive().max(3650).default(90),
+        limit: z.coerce.number().int().min(1).max(1000).default(500),
+      })
+      .parse(request.query ?? {});
+
+    const rows = await app.db.query<{
+      user_id: string;
+      email: string;
+      role: string;
+      joined_at: Date;
+      last_rotated_at: Date | null;
+    }>(
+      `
+      SELECT
+        u.id AS user_id,
+        u.email,
+        m.role,
+        m.created_at AS joined_at,
+        MAX(sr.created_at) AS last_rotated_at
+      FROM memberships m
+      JOIN users u ON u.id = m.user_id
+      LEFT JOIN secret_rotations sr
+        ON sr.target_user_id = m.user_id
+       AND sr.org_id = m.org_id
+       AND sr.secret_type = 'authtoken'
+      WHERE m.org_id = $1
+      GROUP BY u.id, u.email, m.role, m.created_at
+      ORDER BY COALESCE(MAX(sr.created_at), m.created_at) ASC
+      LIMIT $2
+    `,
+      [request.authUser!.orgId, query.limit],
+    );
+
+    const maxAgeMs = query.maxAgeDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const users = rows.rows.map((row) => {
+      const referenceAt = row.last_rotated_at ? row.last_rotated_at.getTime() : row.joined_at.getTime();
+      const ageDays = Math.floor((now - referenceAt) / (24 * 60 * 60 * 1000));
+      return {
+        user_id: row.user_id,
+        email: row.email,
+        role: row.role,
+        joined_at: row.joined_at.toISOString(),
+        last_rotated_at: row.last_rotated_at ? row.last_rotated_at.toISOString() : null,
+        age_days: ageDays,
+        stale: now - referenceAt > maxAgeMs,
+      };
+    });
+
+    return {
+      thresholdDays: query.maxAgeDays,
+      totalUsers: users.length,
+      staleUsers: users.filter((user) => user.stale).length,
+      users,
+    };
+  });
+
+  app.post("/secrets/rotation/scan", async (request) => {
+    const body = z
+      .object({
+        maxAgeDays: z.coerce.number().int().positive().max(3650).default(90),
+      })
+      .parse(request.body ?? {});
+
+    const rows = await app.db.query<{ stale_count: string; oldest_days: string }>(
+      `
+      WITH rotation_state AS (
+        SELECT
+          m.user_id,
+          COALESCE(MAX(sr.created_at), m.created_at) AS reference_at
+        FROM memberships m
+        LEFT JOIN secret_rotations sr
+          ON sr.target_user_id = m.user_id
+         AND sr.org_id = m.org_id
+         AND sr.secret_type = 'authtoken'
+        WHERE m.org_id = $1
+        GROUP BY m.user_id, m.created_at
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE reference_at < NOW() - make_interval(days => $2::int))::text AS stale_count,
+        COALESCE(MAX(EXTRACT(EPOCH FROM NOW() - reference_at) / 86400), 0)::text AS oldest_days
+      FROM rotation_state
+    `,
+      [request.authUser!.orgId, body.maxAgeDays],
+    );
+
+    const staleCount = Number.parseInt(rows.rows[0]?.stale_count ?? "0", 10);
+    const oldestDays = Number.parseFloat(rows.rows[0]?.oldest_days ?? "0");
+
+    if (staleCount > 0) {
+      await app.db.query(
+        `
+        INSERT INTO security_anomaly_events (id, category, severity, user_id, org_id, route, details)
+        VALUES ($1, 'abuse_signal', 'medium', $2, $3, '/v1/admin/secrets/rotation/scan', $4)
+      `,
+        [
+          uuidv4(),
+          request.authUser!.userId,
+          request.authUser!.orgId,
+          { reason: "stale_secret_rotation", staleCount, thresholdDays: body.maxAgeDays, oldestDays: Number.parseFloat(oldestDays.toFixed(2)) },
+        ],
+      );
+    }
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.secret.rotation.scan",
+      entityType: "secret_rotations",
+      entityId: "scan",
+      metadata: { thresholdDays: body.maxAgeDays, staleCount, oldestDays: Number.parseFloat(oldestDays.toFixed(2)) },
+    });
+
+    return { ok: true, thresholdDays: body.maxAgeDays, staleCount, oldestDays: Number.parseFloat(oldestDays.toFixed(2)) };
   });
 
   app.get("/tunnels", async () => {

@@ -23,6 +23,15 @@ const envSchema = z.object({
   CERT_EVENT_BATCH_SIZE: z.coerce.number().int().positive().default(100),
   CERT_EVENT_MAX_RETRIES: z.coerce.number().int().positive().default(6),
   CERT_EVENT_BASE_BACKOFF_SECONDS: z.coerce.number().int().positive().default(45),
+  CERT_DLQ_AUTO_REPLAY_ENABLED: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value.trim().toLowerCase() === "true"),
+  CERT_DLQ_REPLAY_MAX_EVENTS: z.coerce.number().int().positive().default(50),
+  CERT_DLQ_REPLAY_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(900),
+  CERT_DLQ_REPLAY_MAX_REPLAYS: z.coerce.number().int().positive().default(3),
+  CERT_DLQ_REPLAY_MAX_AGE_HOURS: z.coerce.number().int().positive().default(168),
   CERT_PROBE_FALLBACK_ENABLED: z
     .string()
     .optional()
@@ -38,6 +47,7 @@ let certAlertsSentTotal = 0;
 let certRunbooksTriggeredTotal = 0;
 let certRunbookFailuresTotal = 0;
 let certRenewalSlaAlertsSentTotal = 0;
+let certDlqAutoReplayTotal = 0;
 
 type DomainTlsStatus = "issued" | "expiring" | "tls_error" | "passthrough_unverified" | "pending_route" | "pending_issue";
 type CertFailurePolicy = "standard" | "strict" | "hold";
@@ -193,6 +203,9 @@ function renderMetrics(): string {
   lines.push("# HELP fdt_cert_renewal_sla_alerts_sent_total Renewal SLA alerts emitted by worker.");
   lines.push("# TYPE fdt_cert_renewal_sla_alerts_sent_total counter");
   lines.push(`fdt_cert_renewal_sla_alerts_sent_total ${certRenewalSlaAlertsSentTotal}`);
+  lines.push("# HELP fdt_cert_dlq_auto_replays_total Certificate DLQ events automatically re-queued by worker.");
+  lines.push("# TYPE fdt_cert_dlq_auto_replays_total counter");
+  lines.push(`fdt_cert_dlq_auto_replays_total ${certDlqAutoReplayTotal}`);
 
   return `${lines.join("\n")}\n`;
 }
@@ -838,6 +851,64 @@ async function checkRenewalSlaEscalations(): Promise<void> {
   }
 }
 
+async function autoReplayDlqEvents(): Promise<void> {
+  if (!env.CERT_DLQ_AUTO_REPLAY_ENABLED) {
+    return;
+  }
+
+  const candidates = await db.query<{
+    id: string;
+    dlq_replay_count: number;
+  }>(
+    `
+      SELECT id, dlq_replay_count
+      FROM certificate_lifecycle_events
+      WHERE status = 'failed'
+        AND retry_count >= $1
+        AND dlq_replay_count < $2
+        AND updated_at <= NOW() - make_interval(secs => $3::int)
+        AND created_at >= NOW() - make_interval(hours => $4::int)
+      ORDER BY updated_at ASC
+      LIMIT $5
+    `,
+    [
+      env.CERT_EVENT_MAX_RETRIES,
+      env.CERT_DLQ_REPLAY_MAX_REPLAYS,
+      env.CERT_DLQ_REPLAY_COOLDOWN_SECONDS,
+      env.CERT_DLQ_REPLAY_MAX_AGE_HOURS,
+      env.CERT_DLQ_REPLAY_MAX_EVENTS,
+    ],
+  );
+
+  if (candidates.rows.length === 0) {
+    return;
+  }
+
+  const ids = candidates.rows.map((row) => row.id);
+  const replayed = await db.query<{ id: string }>(
+    `
+      UPDATE certificate_lifecycle_events
+      SET
+        status = 'pending',
+        retry_count = 0,
+        next_retry_at = NOW(),
+        processed_at = NULL,
+        last_error = 'auto-replayed from dlq',
+        dlq_replay_count = dlq_replay_count + 1,
+        last_dlq_replayed_at = NOW(),
+        updated_at = NOW()
+      WHERE id = ANY($1::uuid[])
+      RETURNING id
+    `,
+    [ids],
+  );
+
+  certDlqAutoReplayTotal += replayed.rowCount ?? 0;
+  console.warn(
+    `[worker-certificates] auto replayed ${replayed.rowCount ?? 0} failed certificate events from dlq (maxReplays=${env.CERT_DLQ_REPLAY_MAX_REPLAYS})`,
+  );
+}
+
 async function refreshMetricsSnapshot(): Promise<void> {
   const domainStatusRows = await db.query<{ tls_status: DomainTlsStatus; count: string }>(
     `
@@ -904,6 +975,7 @@ async function refreshMetricsSnapshot(): Promise<void> {
 async function loop(): Promise<void> {
   while (true) {
     try {
+      await autoReplayDlqEvents();
       await processCertificateEvents();
       if (env.CERT_PROBE_FALLBACK_ENABLED) {
         await syncCertificateStateByProbe();
