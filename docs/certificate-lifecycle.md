@@ -10,6 +10,12 @@ Certificate state now supports two data paths:
 Ingress endpoint:
 - `POST /v1/domains/cert-events` (token-authenticated via `x-cert-event-token`)
 
+Admin operations:
+- `GET /v1/admin/cert-events` (queue/DLQ visibility)
+- `POST /v1/admin/cert-events/:id/replay` (single-event replay)
+- `POST /v1/admin/cert-events/replay` (bulk replay by status/source/cluster)
+- `GET /v1/admin/domains/cert-region-summary` (cross-region lifecycle summary)
+
 ## Worker
 - Service: `services/worker-certificates`
 - Loop:
@@ -45,7 +51,7 @@ Ingress endpoint:
 ## Current limits
 - Event ingest now supports per-source/per-cluster HMAC provenance validation (`CERT_EVENT_SOURCE_KEYS`) with timestamp freshness checks.
 - Probes still run as fallback and process a bounded batch.
-- Multi-region cert-state aggregation is not yet implemented.
+- Region summaries are API-level aggregates by routed tunnel region; active-active write-replication is not yet implemented.
 
 ## Alerts, metrics, and runbooks
 - Prometheus metrics:
@@ -73,6 +79,5 @@ Ingress endpoint:
 - `CERT_METRICS_PORT`
 
 ## Next hardening
-- Add multi-cluster cert-manager delivery replay and dead-letter queue controls.
-- Add region-level certificate-state aggregation for active-active relay edges.
-- Add multi-region cert-state aggregation.
+- Add multi-region cert-state replication for active-active relay edges.
+- Add automated DLQ replay policies with escalation classes.

@@ -20,6 +20,7 @@ const links = [
   ["/admin/billing-invoices", "Invoices Ops"],
   ["/admin/relay-edges", "Relay Edges"],
   ["/admin/cert-sources", "Cert Sources"],
+  ["/admin/cert-events", "Cert Events"],
   ["/admin/security", "Security Ops"],
   ["/admin/audit", "Audit Ops"],
 ] as const;

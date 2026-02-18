@@ -128,6 +128,274 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { sources: rows.rows };
   });
 
+  app.get("/cert-events", async (request) => {
+    const query = z
+      .object({
+        status: z.enum(["pending", "applied", "failed"]).optional(),
+        source: z.string().min(2).max(80).optional(),
+        clusterId: z.string().min(2).max(120).optional(),
+        orgId: z.string().uuid().optional(),
+        domain: z.string().min(3).optional(),
+        unresolved: z.coerce.boolean().optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const events = await app.db.query(
+      `
+      SELECT
+        e.id,
+        e.source,
+        e.source_event_id,
+        e.cluster_id,
+        e.domain_id,
+        e.domain,
+        e.event_type,
+        e.status,
+        e.retry_count,
+        e.next_retry_at,
+        e.last_error,
+        e.provenance_subject,
+        e.provenance_verified,
+        e.created_at,
+        e.updated_at,
+        e.processed_at,
+        d.org_id,
+        d.tls_status,
+        t.region AS route_region
+      FROM certificate_lifecycle_events e
+      LEFT JOIN custom_domains d ON d.id = e.domain_id OR (e.domain_id IS NULL AND d.domain = e.domain)
+      LEFT JOIN tunnels t ON t.id = d.target_tunnel_id
+      WHERE ($1::text IS NULL OR e.status = $1)
+        AND ($2::text IS NULL OR e.source = LOWER($2))
+        AND ($3::text IS NULL OR e.cluster_id = LOWER($3))
+        AND ($4::uuid IS NULL OR d.org_id = $4)
+        AND ($5::text IS NULL OR e.domain = LOWER($5))
+        AND ($6::boolean IS NULL OR ($6 = TRUE AND e.domain_id IS NULL) OR ($6 = FALSE AND e.domain_id IS NOT NULL))
+      ORDER BY e.created_at DESC
+      LIMIT $7
+    `,
+      [
+        query.status ?? null,
+        query.source ?? null,
+        query.clusterId ?? null,
+        query.orgId ?? null,
+        query.domain ?? null,
+        query.unresolved ?? null,
+        query.limit,
+      ],
+    );
+
+    const stats = await app.db.query<{
+      pending: string;
+      applied: string;
+      failed: string;
+      unresolved: string;
+    }>(
+      `
+      SELECT
+        COUNT(*) FILTER (WHERE e.status = 'pending')::text AS pending,
+        COUNT(*) FILTER (WHERE e.status = 'applied')::text AS applied,
+        COUNT(*) FILTER (WHERE e.status = 'failed')::text AS failed,
+        COUNT(*) FILTER (WHERE e.domain_id IS NULL)::text AS unresolved
+      FROM certificate_lifecycle_events e
+      LEFT JOIN custom_domains d ON d.id = e.domain_id OR (e.domain_id IS NULL AND d.domain = e.domain)
+      WHERE ($1::text IS NULL OR e.source = LOWER($1))
+        AND ($2::text IS NULL OR e.cluster_id = LOWER($2))
+        AND ($3::uuid IS NULL OR d.org_id = $3)
+    `,
+      [query.source ?? null, query.clusterId ?? null, query.orgId ?? null],
+    );
+
+    return {
+      events: events.rows,
+      stats: stats.rows[0] ?? { pending: "0", applied: "0", failed: "0", unresolved: "0" },
+    };
+  });
+
+  app.post("/cert-events/:id/replay", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params ?? {});
+    const body = z
+      .object({
+        force: z.coerce.boolean().optional().default(false),
+        resetRetry: z.coerce.boolean().optional().default(true),
+      })
+      .parse(request.body ?? {});
+
+    const event = await app.db.query<{
+      id: string;
+      status: "pending" | "applied" | "failed";
+      source: string;
+      cluster_id: string | null;
+      domain_id: string | null;
+    }>(
+      `
+      SELECT id, status, source, cluster_id, domain_id
+      FROM certificate_lifecycle_events
+      WHERE id = $1
+      LIMIT 1
+    `,
+      [params.id],
+    );
+
+    if (!event.rowCount || !event.rows[0]) {
+      return reply.code(404).send({ message: "Certificate event not found" });
+    }
+    const row = event.rows[0];
+
+    if (row.status === "applied" && !body.force) {
+      return reply.code(409).send({ message: "Applied events require force=true for replay" });
+    }
+
+    const replayed = await app.db.query<{
+      id: string;
+      status: "pending" | "applied" | "failed";
+      retry_count: number;
+      next_retry_at: Date | null;
+    }>(
+      `
+      UPDATE certificate_lifecycle_events
+      SET
+        status = 'pending',
+        next_retry_at = NOW(),
+        processed_at = NULL,
+        retry_count = CASE WHEN $2 THEN 0 ELSE retry_count END,
+        last_error = CASE WHEN $2 THEN NULL ELSE last_error END,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, status, retry_count, next_retry_at
+    `,
+      [params.id, body.resetRetry],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.cert_event.replay",
+      entityType: "certificate_lifecycle_event",
+      entityId: params.id,
+      metadata: {
+        force: body.force,
+        resetRetry: body.resetRetry,
+        previousStatus: row.status,
+        source: row.source,
+        clusterId: row.cluster_id,
+      },
+    });
+
+    return { ok: true, event: replayed.rows[0] };
+  });
+
+  app.post("/cert-events/replay", async (request) => {
+    const body = z
+      .object({
+        status: z.enum(["pending", "applied", "failed"]).optional().default("failed"),
+        source: z.string().min(2).max(80).optional(),
+        clusterId: z.string().min(2).max(120).optional(),
+        domain: z.string().min(3).optional(),
+        limit: z.coerce.number().int().min(1).max(1000).default(100),
+        resetRetry: z.coerce.boolean().optional().default(true),
+        dryRun: z.coerce.boolean().optional().default(false),
+      })
+      .parse(request.body ?? {});
+
+    const candidates = await app.db.query<{ id: string }>(
+      `
+      SELECT id
+      FROM certificate_lifecycle_events
+      WHERE status = $1
+        AND ($2::text IS NULL OR source = LOWER($2))
+        AND ($3::text IS NULL OR cluster_id = LOWER($3))
+        AND ($4::text IS NULL OR domain = LOWER($4))
+      ORDER BY created_at DESC
+      LIMIT $5
+    `,
+      [body.status, body.source ?? null, body.clusterId ?? null, body.domain ?? null, body.limit],
+    );
+
+    const ids = candidates.rows.map((row) => row.id);
+    if (body.dryRun || ids.length === 0) {
+      return {
+        ok: true,
+        dryRun: body.dryRun,
+        attempted: ids.length,
+        replayed: 0,
+        ids,
+      };
+    }
+
+    const updated = await app.db.query<{ id: string }>(
+      `
+      UPDATE certificate_lifecycle_events
+      SET
+        status = 'pending',
+        next_retry_at = NOW(),
+        processed_at = NULL,
+        retry_count = CASE WHEN $2 THEN 0 ELSE retry_count END,
+        last_error = CASE WHEN $2 THEN NULL ELSE last_error END,
+        updated_at = NOW()
+      WHERE id = ANY($1::uuid[])
+      RETURNING id
+    `,
+      [ids, body.resetRetry],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.cert_event.replay.bulk",
+      entityType: "certificate_lifecycle_event",
+      entityId: "bulk",
+      metadata: {
+        status: body.status,
+        source: body.source ?? null,
+        clusterId: body.clusterId ?? null,
+        limit: body.limit,
+        replayed: updated.rowCount ?? 0,
+        resetRetry: body.resetRetry,
+      },
+    });
+
+    return {
+      ok: true,
+      dryRun: false,
+      attempted: ids.length,
+      replayed: updated.rowCount ?? 0,
+      ids: updated.rows.map((row) => row.id),
+    };
+  });
+
+  app.get("/domains/cert-region-summary", async (request) => {
+    const query = z
+      .object({
+        orgId: z.string().uuid().optional(),
+      })
+      .parse(request.query ?? {});
+
+    const summary = await app.db.query(
+      `
+      SELECT
+        COALESCE(t.region, 'unassigned') AS region,
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE d.tls_status = 'issued')::text AS issued,
+        COUNT(*) FILTER (WHERE d.tls_status = 'expiring')::text AS expiring,
+        COUNT(*) FILTER (WHERE d.tls_status = 'tls_error')::text AS tls_error,
+        COUNT(*) FILTER (WHERE d.tls_status = 'pending_issue')::text AS pending_issue,
+        COUNT(*) FILTER (WHERE d.tls_status = 'pending_route')::text AS pending_route,
+        COUNT(*) FILTER (WHERE d.tls_status = 'passthrough_unverified')::text AS passthrough_unverified,
+        MAX(d.cert_last_event_at) AS last_event_at
+      FROM custom_domains d
+      LEFT JOIN tunnels t ON t.id = d.target_tunnel_id
+      WHERE ($1::uuid IS NULL OR d.org_id = $1)
+      GROUP BY COALESCE(t.region, 'unassigned')
+      ORDER BY COALESCE(t.region, 'unassigned') ASC
+    `,
+      [query.orgId ?? null],
+    );
+
+    return { regions: summary.rows };
+  });
+
   app.get("/security-anomalies", async (request) => {
     const query = z
       .object({
@@ -811,6 +1079,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         destination,
         sink_url,
         scheduled_for,
+        next_attempt_at,
+        attempts,
+        max_attempts,
+        last_delivery_status,
         started_at,
         completed_at,
         row_count,
@@ -839,6 +1111,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         sinkUrl: z.string().url().optional(),
         orgId: z.string().uuid().optional(),
         scheduledFor: z.coerce.date().optional(),
+        maxAttempts: z.coerce.number().int().min(1).max(20).optional().default(5),
         payload: z.record(z.unknown()).optional(),
       })
       .parse(request.body ?? {});
@@ -859,11 +1132,24 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         destination,
         sink_url,
         scheduled_for,
+        next_attempt_at,
+        attempts,
+        max_attempts,
         payload_json
       )
-      VALUES ($1, $2, $3, 'csv', 'pending', $4, $5, $6, $7)
+      VALUES ($1, $2, $3, 'csv', 'pending', $4, $5, $6, $7, 0, $8, $9)
     `,
-      [id, body.orgId ?? null, body.dataset, body.destination, body.sinkUrl ?? null, body.scheduledFor ?? new Date(), body.payload ?? null],
+      [
+        id,
+        body.orgId ?? null,
+        body.dataset,
+        body.destination,
+        body.sinkUrl ?? null,
+        body.scheduledFor ?? new Date(),
+        body.scheduledFor ?? new Date(),
+        body.maxAttempts,
+        body.payload ?? null,
+      ],
     );
 
     await app.audit.log({
@@ -876,10 +1162,85 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         dataset: body.dataset,
         destination: body.destination,
         orgId: body.orgId ?? null,
+        maxAttempts: body.maxAttempts,
       },
     });
 
     return { ok: true, id };
+  });
+
+  app.post("/billing-reports/exports/reconcile", async (request) => {
+    const body = z
+      .object({
+        status: z.enum(["pending", "running", "failed"]).optional().default("failed"),
+        dataset: z.enum(["finance_events", "invoices", "dunning"]).optional(),
+        destination: z.enum(["inline", "webhook", "s3", "warehouse"]).optional(),
+        orgId: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(1000).default(200),
+        resetAttempts: z.coerce.boolean().optional().default(false),
+      })
+      .parse(request.body ?? {});
+
+    const candidates = await app.db.query<{ id: string }>(
+      `
+      SELECT id
+      FROM billing_report_exports
+      WHERE status = $1
+        AND ($2::text IS NULL OR dataset = $2)
+        AND ($3::text IS NULL OR destination = $3)
+        AND ($4::uuid IS NULL OR org_id = $4)
+      ORDER BY COALESCE(next_attempt_at, scheduled_for, created_at) ASC
+      LIMIT $5
+    `,
+      [body.status, body.dataset ?? null, body.destination ?? null, body.orgId ?? null, body.limit],
+    );
+
+    const ids = candidates.rows.map((row) => row.id);
+    if (ids.length === 0) {
+      return { ok: true, attempted: 0, replayed: 0, ids: [] };
+    }
+
+    const updated = await app.db.query<{ id: string }>(
+      `
+      UPDATE billing_report_exports
+      SET
+        status = 'pending',
+        next_attempt_at = NOW(),
+        started_at = NULL,
+        completed_at = NULL,
+        error = NULL,
+        last_delivery_status = 'reconciled',
+        attempts = CASE WHEN $2 THEN 0 ELSE attempts END,
+        updated_at = NOW()
+      WHERE id = ANY($1::uuid[])
+      RETURNING id
+    `,
+      [ids, body.resetAttempts],
+    );
+
+    await app.audit.log({
+      actorUserId: request.authUser!.userId,
+      orgId: request.authUser!.orgId,
+      action: "admin.billing_report.export.reconcile",
+      entityType: "billing_report_export",
+      entityId: "bulk",
+      metadata: {
+        status: body.status,
+        dataset: body.dataset ?? null,
+        destination: body.destination ?? null,
+        orgId: body.orgId ?? null,
+        attempted: ids.length,
+        replayed: updated.rowCount ?? 0,
+        resetAttempts: body.resetAttempts,
+      },
+    });
+
+    return {
+      ok: true,
+      attempted: ids.length,
+      replayed: updated.rowCount ?? 0,
+      ids: updated.rows.map((row) => row.id),
+    };
   });
 
   app.get("/billing-invoices", async (request) => {

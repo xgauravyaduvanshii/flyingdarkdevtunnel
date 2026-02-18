@@ -49,6 +49,21 @@ This runbook maps Prometheus alert signals to immediate responder actions.
 1. If provider auth issue, rotate key material and replay failures.
 2. If schema mismatch, hotfix parser and replay failed class.
 
+## Billing report export delivery failures
+### Trigger
+- Failed rows in `billing_report_exports` with destination `webhook|warehouse|s3`.
+
+### First checks
+1. Query failed exports:
+   - `SELECT id, dataset, destination, attempts, max_attempts, next_attempt_at, error FROM billing_report_exports WHERE status='failed' ORDER BY updated_at DESC LIMIT 50;`
+2. Confirm sink health (HTTP response status or object-store auth).
+
+### Mitigation
+1. Replay queue via admin API:
+   - `POST /v1/admin/billing-reports/exports/reconcile`
+2. If retries are exhausted too quickly, increase `max_attempts` for new jobs and tune `BILLING_REPORT_RETRY_SCHEDULE_SECONDS`.
+3. For stale running jobs, verify worker liveness and `BILLING_REPORT_RUNNING_TIMEOUT_SECONDS`.
+
 ## Certificate runbook trigger failures
 ### Alert
 - `CertificateLifecycleRunbookFailures`

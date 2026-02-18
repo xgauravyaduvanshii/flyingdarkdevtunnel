@@ -139,29 +139,52 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Added nightly resilience CI workflow and relay-capacity alerting.
   - Added environment-aware renewal SLA escalation in `worker-certificates` with new warning/breach metrics and runbook routing.
   - Added Grafana auto-provisioning and dashboard for relay, billing, and certificate SLOs.
+- Queue implementation batch (this update):
+  - Added certificate lifecycle dead-letter tooling:
+    - `GET /v1/admin/cert-events`
+    - `POST /v1/admin/cert-events/:id/replay`
+    - `POST /v1/admin/cert-events/replay`
+  - Added cross-region certificate state summary endpoint:
+    - `GET /v1/admin/domains/cert-region-summary`
+  - Added billing export delivery guarantees:
+    - retry scheduling (`attempts`, `max_attempts`, `next_attempt_at`, `last_delivery_status`)
+    - stale-running reconciliation in billing worker
+    - admin reconcile endpoint `POST /v1/admin/billing-reports/exports/reconcile`
+  - Added weighted regional edge assignment and failover controls:
+    - `RELAY_REGION_WEIGHTS`
+    - `RELAY_FAILOVER_REGIONS`
+  - Added adaptive auth abuse blocking:
+    - `AUTH_ABUSE_BLOCK_THRESHOLD`
+    - `AUTH_ABUSE_BLOCK_WINDOW_MINUTES`
+    - login gate returns `429` for blocked high-risk IP windows.
+  - Added admin UI pages/controls:
+    - cert event operations (`apps/console-web/app/admin/cert-events/page.tsx`)
+    - billing export reconcile + retry visibility enhancements.
 
 ## In Progress
 - Certificate lifecycle automation depth:
   - Relay autocert path implemented.
   - Event-driven issuance/renewal status integration shipped with per-source/per-cluster provenance verification.
   - Renewal SLA escalation shipped with environment-aware incident routing (`dev|staging|prod`) and new alert classes.
+  - DLQ replay and cert-region summary shipped; active-active cross-region replication remains.
 - Payment production hardening:
   - Signed runbook replay automation and staged dunning orchestration shipped.
   - Dashboard SLO/paging baseline shipped via worker metrics + runbook scaffold (`docs/runbooks/billing-webhook-slo.md`).
-  - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`); final production tuning remains telemetry-driven.
+  - Provider-specific dunning cadence and richer notification channels shipped (`webhook|email|slack`).
+  - Export retry/reconciliation pipeline shipped; production retry tuning remains telemetry-driven.
 - Observability operations:
   - Relay active/inflight/rejection metrics and alert rules are live.
   - Grafana auto-provisioned dashboard shipped (`infra/monitoring/grafana/dashboards/fdt-edge-billing-overview.json`).
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:
-   - Add cert-event dead-letter queue tooling and replay controls for multi-cluster cert-manager outages.
-   - Add cross-region cert-state aggregation for active-active relay topologies.
+   - Add multi-region cert-state replication for active-active relay topologies.
+   - Add automated DLQ replay policies and incident escalation tiers.
 2. Payment hardening + finance ops:
    - Tune provider retry/dunning policy by live payment telemetry and recovery outcomes.
-   - Add scheduled external sink delivery guarantees and reconciliation checks.
+   - Add sink delivery acknowledgement tracking and external reconciliation sinks.
 3. Multi-region edge foundations:
-   - Expand beyond US with weighted region assignment and failover policy drills.
+   - Expand beyond US with region capacity planning and failover policy drills.
 4. Enterprise controls:
    - SAML/OIDC IdP onboarding and enforcement flows.
    - SCIM-style org provisioning and advanced role templates.
@@ -169,7 +192,7 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Continue tightening nightly resilience thresholds per environment baseline.
   - Add chaos experiments for relay/API/Redis dependency failures.
 6. Security hardening:
-   - Expand anomaly detection into adaptive abuse/rate-limit decisions.
+   - Expand anomaly detection into adaptive abuse/rate-limit decisions across non-auth endpoints.
    - Add periodic secret-rotation automation and verification jobs.
 
 ## Definition of Done (for current hardening track)

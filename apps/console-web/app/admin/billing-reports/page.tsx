@@ -10,6 +10,10 @@ type ExportJob = {
   status: "pending" | "running" | "completed" | "failed";
   destination: "inline" | "webhook" | "s3" | "warehouse";
   sink_url: string | null;
+  next_attempt_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  last_delivery_status: string | null;
   row_count: number | null;
   error: string | null;
   created_at: string;
@@ -22,6 +26,7 @@ export default function AdminBillingReportsPage() {
   const [destination, setDestination] = useState<ExportJob["destination"]>("inline");
   const [sinkUrl, setSinkUrl] = useState("");
   const [orgId, setOrgId] = useState("");
+  const [maxAttempts, setMaxAttempts] = useState("5");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -49,12 +54,29 @@ export default function AdminBillingReportsPage() {
           destination,
           sinkUrl: destination === "webhook" || destination === "warehouse" ? sinkUrl || undefined : undefined,
           orgId: orgId || undefined,
+          maxAttempts: Number.parseInt(maxAttempts, 10) || 5,
         }),
       });
       setMessage(`Report export job queued: ${response.id}`);
       await load();
     } catch (error) {
       setMessage(`Create failed: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reconcileFailed() {
+    setBusy(true);
+    try {
+      const response = await api<{ attempted: number; replayed: number }>("/v1/admin/billing-reports/exports/reconcile", {
+        method: "POST",
+        body: JSON.stringify({ status: "failed", limit: 200, resetAttempts: false }),
+      });
+      setMessage(`Reconcile queued ${response.replayed}/${response.attempted} failed exports`);
+      await load();
+    } catch (error) {
+      setMessage(`Reconcile failed: ${String(error)}`);
     } finally {
       setBusy(false);
     }
@@ -87,6 +109,10 @@ export default function AdminBillingReportsPage() {
             <label>Org ID (optional)</label>
             <input value={orgId} onChange={(event) => setOrgId(event.target.value)} placeholder="00000000-..." />
           </div>
+          <div>
+            <label>Max attempts</label>
+            <input value={maxAttempts} onChange={(event) => setMaxAttempts(event.target.value)} />
+          </div>
           {(destination === "webhook" || destination === "warehouse") && (
             <div>
               <label>Sink URL</label>
@@ -100,7 +126,12 @@ export default function AdminBillingReportsPage() {
       </section>
 
       <section className="card" style={{ gridColumn: "1 / -1" }}>
-        <h3>Export jobs</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <h3>Export jobs</h3>
+          <button className="button secondary" onClick={() => void reconcileFailed()} disabled={busy}>
+            Reconcile failed
+          </button>
+        </div>
         <table className="table">
           <thead>
             <tr>
@@ -108,6 +139,9 @@ export default function AdminBillingReportsPage() {
               <th>Dataset</th>
               <th>Status</th>
               <th>Destination</th>
+              <th>Attempts</th>
+              <th>Next retry</th>
+              <th>Delivery state</th>
               <th>Rows</th>
               <th>Org</th>
               <th>Error</th>
@@ -120,6 +154,11 @@ export default function AdminBillingReportsPage() {
                 <td>{job.dataset}</td>
                 <td>{job.status}</td>
                 <td>{job.destination}</td>
+                <td>
+                  {job.attempts}/{job.max_attempts}
+                </td>
+                <td>{job.next_attempt_at ? new Date(job.next_attempt_at).toLocaleString() : "-"}</td>
+                <td>{job.last_delivery_status ?? "-"}</td>
                 <td>{job.row_count ?? "-"}</td>
                 <td>{job.org_id ?? "all"}</td>
                 <td style={{ maxWidth: 320, whiteSpace: "normal", wordBreak: "break-word" }}>{job.error ?? "-"}</td>
