@@ -6,6 +6,7 @@
 - Relay enforces IP allowlist/CIDR restrictions for inbound requests.
 - Passthrough hosts are blocked from HTTP termination path (`426`).
 - Relay enforces plan-bound concurrency limits from agent token claims and applies backpressure (`429`).
+- Relay edge assignment supports weighted scheduling and configured regional failover.
 
 ## TLS modes
 1. Termination
@@ -42,9 +43,8 @@
 - Strict mode (`DOMAIN_VERIFY_STRICT=true`) checks TXT record at `_fdt-verify.<domain>`.
 
 ## Next hardening items
-- Cert-source provenance validation and stricter cert-manager webhook trust boundaries.
-- Renew/expiry SLO alerting and paging policy automation.
-- Abuse/rate-limiting anomaly baselines and automated response tuning.
+- Renew/expiry SLO tuning by environment telemetry.
+- Adaptive abuse response tuning with IP reputation feeds.
 
 ## Token and abuse hardening
 - JWT access/refresh/agent tokens are issued with `jti`.
@@ -55,4 +55,7 @@
 - Security anomaly events (`security_anomaly_events`) track:
   - auth failures,
   - revoked-token activity,
-  - rate-limit bursts.
+  - rate-limit bursts,
+  - abuse-signal escalations.
+- Adaptive login gate:
+  - repeated high-severity abuse signals from one IP trigger temporary login blocking (`429`).

@@ -119,6 +119,27 @@ async function maybeRecordAbuseSignal(
   });
 }
 
+async function isIpAbuseBlocked(app: FastifyInstance, ip: string | null): Promise<{ blocked: boolean; signals: number }> {
+  if (!ip) return { blocked: false, signals: 0 };
+
+  const rows = await app.db.query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM security_anomaly_events
+      WHERE category = 'abuse_signal'
+        AND severity = 'high'
+        AND ip = $1
+        AND created_at >= NOW() - make_interval(mins => $2::int)
+    `,
+    [ip, app.env.AUTH_ABUSE_BLOCK_WINDOW_MINUTES],
+  );
+  const signals = Number.parseInt(rows.rows[0]?.count ?? "0", 10);
+  return {
+    blocked: signals >= app.env.AUTH_ABUSE_BLOCK_THRESHOLD,
+    signals,
+  };
+}
+
 export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/register", async (request, reply) => {
     const body = registerSchema.parse(request.body);
@@ -186,6 +207,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/login", async (request, reply) => {
     const body = loginSchema.parse(request.body);
+    const abuseCheck = await isIpAbuseBlocked(app, request.ip ?? null);
+    if (abuseCheck.blocked) {
+      await recordSecurityAnomaly(app, {
+        category: "abuse_signal",
+        severity: "high",
+        ip: request.ip ?? null,
+        route: "/v1/auth/login",
+        details: {
+          reason: "temporary_ip_block",
+          highSeveritySignalsWindow: abuseCheck.signals,
+          windowMinutes: app.env.AUTH_ABUSE_BLOCK_WINDOW_MINUTES,
+        },
+      });
+
+      return reply.code(429).send({
+        message: "Too many suspicious authentication attempts from this IP. Try again later.",
+        blockWindowMinutes: app.env.AUTH_ABUSE_BLOCK_WINDOW_MINUTES,
+      });
+    }
 
     const userRes = await app.db.query<{
       id: string;

@@ -89,7 +89,9 @@ Entitlements are refreshed from `plans` when a paid plan is active.
   - staged failed-payment recovery state (`open`, `recovered`, `closed`)
 - `billing_report_exports`:
   - scheduled finance export queue (`pending`, `running`, `completed`, `failed`)
-  - supports inline storage or webhook sink delivery
+  - supports inline storage, webhook/warehouse sinks, and S3 delivery
+  - retry/reconciliation metadata:
+    - `attempts`, `max_attempts`, `next_attempt_at`, `last_delivery_status`
 
 ## Worker sync
 `services/worker-billing` polls Stripe/Razorpay/PayPal subscriptions (when credentials exist) and reconciles status + plan entitlements to reduce drift from missed webhook deliveries.
@@ -97,7 +99,7 @@ Entitlements are refreshed from `plans` when a paid plan is active.
 Additional worker hardening:
 - auto-runbook replay triggers by provider/event-class when webhook failures spike,
 - dunning stage advancement + optional signed notification webhooks,
-- report export processing for queued jobs.
+- report export processing with retry schedules, stale-running recovery, and delivery-state tracking.
 
 ## Env
 - Stripe: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
@@ -113,6 +115,7 @@ Additional worker hardening:
 - Dunning notifications: `BILLING_DUNNING_NOTIFICATION_WEBHOOK_URL`, `BILLING_DUNNING_NOTIFICATION_SECRET`
 - Dunning max stage: `BILLING_DUNNING_MAX_STAGE`
 - Report exports: `BILLING_REPORT_EXPORT_BATCH_SIZE`, `BILLING_REPORT_DEFAULT_SINK_URL`, `BILLING_REPORT_SIGNING_SECRET`
+- Report delivery retries: `BILLING_REPORT_RETRY_SCHEDULE_SECONDS`, `BILLING_REPORT_RUNNING_TIMEOUT_SECONDS`
 - Metrics endpoint: `BILLING_METRICS_PORT`
 
 ## Admin operations
@@ -124,6 +127,7 @@ Additional worker hardening:
   - `GET /v1/admin/billing-dunning?provider=&status=&orgId=&limit=`
   - `POST /v1/admin/billing-reports/exports`
   - `GET /v1/admin/billing-reports/exports`
+  - `POST /v1/admin/billing-reports/exports/reconcile`
   - `GET /v1/admin/billing-invoices?provider=&status=&orgId=&limit=&includeTax=`
   - `GET /v1/admin/billing-invoices/export?provider=&status=&orgId=&dataset=invoices|tax&limit=`
 - Admin UI:

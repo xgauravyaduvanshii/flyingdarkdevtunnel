@@ -22,6 +22,10 @@
   - billing webhook idempotency (`billing_webhook_events`) for duplicate Razorpay events,
   - admin billing-webhook visibility API for operations,
   - admin replay/reconcile billing webhook operations.
+  - billing report export queue with reconcile/reset-attempt operations.
+  - certificate event DLQ/admin replay controls and cert region summary.
+  - weighted relay edge selection with regional failover.
+  - adaptive abuse login blocking after high-severity anomaly signals.
 
 ## End-to-end smoke test
 - Script: `scripts/integration-smoke.sh`

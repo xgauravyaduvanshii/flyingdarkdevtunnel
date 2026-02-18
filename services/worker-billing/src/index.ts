@@ -37,6 +37,8 @@ const envSchema = z.object({
   BILLING_DUNNING_SLACK_WEBHOOK_URL: z.string().url().optional(),
   BILLING_REPORT_EXPORT_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   BILLING_REPORT_WEBHOOK_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(12),
+  BILLING_REPORT_RETRY_SCHEDULE_SECONDS: z.string().optional().default("60,300,900,1800,3600"),
+  BILLING_REPORT_RUNNING_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
   BILLING_REPORT_DEFAULT_SINK_URL: z.string().url().optional(),
   BILLING_REPORT_WAREHOUSE_SINK_URL: z.string().url().optional(),
   BILLING_REPORT_SIGNING_SECRET: z.string().optional(),
@@ -83,6 +85,7 @@ const dunningSchedules: Record<BillingProvider, number[]> = {
   razorpay: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_RAZORPAY, [30 * 60, 2 * 60 * 60, 8 * 60 * 60, 24 * 60 * 60, 48 * 60 * 60]),
   paypal: parseDunningSchedule(env.BILLING_DUNNING_SCHEDULE_PAYPAL, [30 * 60, 4 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60, 72 * 60 * 60]),
 };
+const reportRetrySchedule = parseDunningSchedule(env.BILLING_REPORT_RETRY_SCHEDULE_SECONDS, [60, 300, 900, 1800, 3600]);
 let webhookMetricsGeneratedAt = Date.now();
 let webhookHealthByProvider: Record<BillingProvider, WebhookHealthSummary> = {
   stripe: { failed1h: 0, failed24h: 0, stalePending: 0, p95LatencySeconds: 0, processed1h: 0, sloViolationCount1h: 0 },
@@ -147,6 +150,11 @@ function dunningDelaySeconds(provider: BillingProvider, stage: number): number {
   const schedule = dunningSchedules[provider];
   const index = Math.max(0, Math.min(stage - 1, schedule.length - 1));
   return schedule[index] ?? schedule[schedule.length - 1] ?? 24 * 60 * 60;
+}
+
+function reportRetryDelaySeconds(attempt: number): number {
+  const index = Math.max(0, Math.min(attempt - 1, reportRetrySchedule.length - 1));
+  return reportRetrySchedule[index] ?? reportRetrySchedule[reportRetrySchedule.length - 1] ?? 300;
 }
 
 function getS3Client(): S3Client {
@@ -968,6 +976,22 @@ async function buildReportCsv(dataset: "finance_events" | "invoices" | "dunning"
 }
 
 async function processReportExports(): Promise<void> {
+  await db.query(
+    `
+      UPDATE billing_report_exports
+      SET
+        status = 'pending',
+        next_attempt_at = NOW(),
+        error = COALESCE(error, 'stale running export reconciled'),
+        last_delivery_status = 'stale_recovered',
+        updated_at = NOW()
+      WHERE status = 'running'
+        AND started_at IS NOT NULL
+        AND started_at <= NOW() - make_interval(secs => $1::int)
+    `,
+    [env.BILLING_REPORT_RUNNING_TIMEOUT_SECONDS],
+  );
+
   const jobs = await db.query<{
     id: string;
     org_id: string | null;
@@ -975,13 +999,16 @@ async function processReportExports(): Promise<void> {
     destination: "inline" | "webhook" | "s3" | "warehouse";
     sink_url: string | null;
     payload_json: unknown;
+    attempts: number;
+    max_attempts: number;
   }>(
     `
-      SELECT id, org_id, dataset, destination, sink_url, payload_json
+      SELECT id, org_id, dataset, destination, sink_url, payload_json, attempts, max_attempts
       FROM billing_report_exports
-      WHERE status = 'pending'
-        AND scheduled_for <= NOW()
-      ORDER BY scheduled_for ASC, created_at ASC
+      WHERE status IN ('pending', 'failed')
+        AND COALESCE(next_attempt_at, scheduled_for) <= NOW()
+        AND attempts < max_attempts
+      ORDER BY COALESCE(next_attempt_at, scheduled_for, created_at) ASC, created_at ASC
       LIMIT $1
     `,
     [env.BILLING_REPORT_EXPORT_BATCH_SIZE],
@@ -991,7 +1018,12 @@ async function processReportExports(): Promise<void> {
     await db.query(
       `
         UPDATE billing_report_exports
-        SET status = 'running', started_at = NOW(), updated_at = NOW()
+        SET
+          status = 'running',
+          started_at = NOW(),
+          attempts = attempts + 1,
+          last_delivery_status = 'running',
+          updated_at = NOW()
         WHERE id = $1
       `,
       [job.id],
@@ -1078,10 +1110,12 @@ async function processReportExports(): Promise<void> {
             SET
               status = 'completed',
               completed_at = NOW(),
+              next_attempt_at = NULL,
               row_count = $2,
               content_hash = $3,
               content_text = NULL,
               sink_url = $4,
+              last_delivery_status = 'delivered',
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
@@ -1114,10 +1148,12 @@ async function processReportExports(): Promise<void> {
             SET
               status = 'completed',
               completed_at = NOW(),
+              next_attempt_at = NULL,
               row_count = $2,
               content_hash = $3,
               content_text = NULL,
               sink_url = $4,
+              last_delivery_status = 'delivered',
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
@@ -1131,9 +1167,11 @@ async function processReportExports(): Promise<void> {
             SET
               status = 'completed',
               completed_at = NOW(),
+              next_attempt_at = NULL,
               row_count = $2,
               content_hash = $3,
               content_text = $4,
+              last_delivery_status = 'delivered',
               error = NULL,
               updated_at = NOW()
             WHERE id = $1
@@ -1142,14 +1180,41 @@ async function processReportExports(): Promise<void> {
         );
       }
     } catch (error) {
-      await db.query(
-        `
-          UPDATE billing_report_exports
-          SET status = 'failed', completed_at = NOW(), error = $2, updated_at = NOW()
-          WHERE id = $1
-        `,
-        [job.id, String(error)],
-      );
+      const attemptNumber = job.attempts + 1;
+      const errorText = String(error);
+      if (attemptNumber >= job.max_attempts) {
+        await db.query(
+          `
+            UPDATE billing_report_exports
+            SET
+              status = 'failed',
+              completed_at = NOW(),
+              next_attempt_at = NULL,
+              last_delivery_status = 'exhausted',
+              error = $2,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [job.id, errorText],
+        );
+      } else {
+        const retryDelaySeconds = reportRetryDelaySeconds(attemptNumber);
+        const nextAttemptAt = new Date(Date.now() + retryDelaySeconds * 1000);
+        await db.query(
+          `
+            UPDATE billing_report_exports
+            SET
+              status = 'pending',
+              completed_at = NULL,
+              next_attempt_at = $2,
+              last_delivery_status = 'retry_scheduled',
+              error = $3,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [job.id, nextAttemptAt, errorText],
+        );
+      }
     }
   }
 }

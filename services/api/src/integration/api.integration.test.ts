@@ -14,7 +14,11 @@ const defaults: Record<string, string> = {
   BASE_DOMAIN: "tunnel.yourdomain.com",
   DOMAIN_VERIFY_STRICT: "false",
   ALLOWED_REGIONS: "us,eu,ap",
+  RELAY_REGION_WEIGHTS: "eu=eu-edge-integration-1:10|eu-edge-integration-2:1",
+  RELAY_FAILOVER_REGIONS: "ap=eu,us;eu=us",
   BILLING_RUNBOOK_SIGNING_SECRET: "integration_runbook_secret_32_chars_minimum",
+  AUTH_ABUSE_BLOCK_THRESHOLD: "1",
+  AUTH_ABUSE_BLOCK_WINDOW_MINUTES: "30",
   CERT_EVENT_INGEST_TOKEN: "integration_cert_ingest_token",
   CERT_EVENT_SOURCE_KEYS: "cert_manager:cluster-eu=integration_cert_source_secret",
   CERT_EVENT_REQUIRE_PROVENANCE: "true",
@@ -527,7 +531,7 @@ describe("api integration", () => {
       method: "POST",
       url: "/v1/admin/billing-reports/exports",
       headers: { authorization: `Bearer ${ownerToken}` },
-      payload: { dataset: "finance_events", destination: "inline" },
+      payload: { dataset: "finance_events", destination: "inline", maxAttempts: 7 },
     });
     expect(reportCreateRes.statusCode).toBe(200);
     const reportCreateBody = reportCreateRes.json() as { ok: boolean; id: string };
@@ -540,9 +544,36 @@ describe("api integration", () => {
     });
     expect(reportListRes.statusCode).toBe(200);
     const reportListBody = reportListRes.json() as {
-      exports: Array<{ id: string; dataset: string; status: string }>;
+      exports: Array<{ id: string; dataset: string; status: string; max_attempts: number }>;
     };
-    expect(reportListBody.exports.some((job) => job.id === reportCreateBody.id && job.dataset === "finance_events")).toBe(true);
+    expect(
+      reportListBody.exports.some(
+        (job) => job.id === reportCreateBody.id && job.dataset === "finance_events" && job.max_attempts === 7,
+      ),
+    ).toBe(true);
+
+    await app.db.query(`UPDATE billing_report_exports SET status = 'failed', attempts = 2, error = 'integration failed' WHERE id = $1`, [
+      reportCreateBody.id,
+    ]);
+
+    const reconcileRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/billing-reports/exports/reconcile",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { status: "failed", limit: 20, resetAttempts: true },
+    });
+    expect(reconcileRes.statusCode).toBe(200);
+    const reconcileBody = reconcileRes.json() as { attempted: number; replayed: number };
+    expect(reconcileBody.attempted).toBeGreaterThan(0);
+    expect(reconcileBody.replayed).toBeGreaterThan(0);
+
+    const reconciledRow = await app.db.query<{ status: string; attempts: number; next_attempt_at: Date | null }>(
+      `SELECT status, attempts, next_attempt_at FROM billing_report_exports WHERE id = $1 LIMIT 1`,
+      [reportCreateBody.id],
+    );
+    expect(reconciledRow.rows[0]?.status).toBe("pending");
+    expect(reconciledRow.rows[0]?.attempts).toBe(0);
+    expect(reconciledRow.rows[0]?.next_attempt_at).toBeTruthy();
   }, 30_000);
 
   it("enforces token revoke list and signed runbook replay with dunning visibility", async () => {
@@ -796,6 +827,53 @@ describe("api integration", () => {
     const eventsBody = eventsRes.json() as { events: Array<{ event_type: string; status: string }> };
     expect(eventsBody.events.some((event) => event.event_type === "renewal_failed" && event.status === "pending")).toBe(true);
 
+    const adminEventsRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/cert-events?status=pending&clusterId=cluster-eu&limit=50",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(adminEventsRes.statusCode).toBe(200);
+    const adminEventsBody = adminEventsRes.json() as {
+      events: Array<{ id: string; domain: string }>;
+      stats: { pending: string; failed: string };
+    };
+    const adminEventId = adminEventsBody.events.find((event) => event.domain === domainName)?.id;
+    expect(adminEventId).toBeTruthy();
+    expect(Number.parseInt(adminEventsBody.stats.pending, 10)).toBeGreaterThan(0);
+
+    await app.db.query(`UPDATE certificate_lifecycle_events SET status = 'failed', retry_count = 3 WHERE id = $1`, [adminEventId]);
+
+    const replayRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/cert-events/replay",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { status: "failed", source: "cert_manager", clusterId: "cluster-eu", limit: 20, resetRetry: true },
+    });
+    expect(replayRes.statusCode).toBe(200);
+    const replayBody = replayRes.json() as { replayed: number; attempted: number };
+    expect(replayBody.attempted).toBeGreaterThan(0);
+    expect(replayBody.replayed).toBeGreaterThan(0);
+
+    const replayedEvent = await app.db.query<{ status: string; retry_count: number }>(
+      `SELECT status, retry_count FROM certificate_lifecycle_events WHERE id = $1 LIMIT 1`,
+      [adminEventId],
+    );
+    expect(replayedEvent.rows[0]?.status).toBe("pending");
+    expect(replayedEvent.rows[0]?.retry_count).toBe(0);
+
+    const regionSummaryRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/domains/cert-region-summary",
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(regionSummaryRes.statusCode).toBe(200);
+    const regionSummaryBody = regionSummaryRes.json() as {
+      regions: Array<{ region: string; total: string }>;
+    };
+    expect(regionSummaryBody.regions.some((region) => region.region === "eu" && Number.parseInt(region.total, 10) > 0)).toBe(
+      true,
+    );
+
     const domainsRes = await app.inject({
       method: "GET",
       url: "/v1/domains/custom",
@@ -984,8 +1062,8 @@ describe("api integration", () => {
     expect(reconcileBody.processed).toBeGreaterThan(0);
   }, 30_000);
 
-  it("accepts relay heartbeat updates and assigns region-aware edge", async () => {
-    const heartbeatRes = await app.inject({
+  it("accepts relay heartbeat updates and assigns weighted region edges with failover", async () => {
+    const heartbeatPrimaryRes = await app.inject({
       method: "POST",
       url: "/v1/relay/heartbeat",
       headers: {
@@ -1000,7 +1078,24 @@ describe("api integration", () => {
         rejectedOverlimit: 0,
       },
     });
-    expect(heartbeatRes.statusCode).toBe(200);
+    expect(heartbeatPrimaryRes.statusCode).toBe(200);
+
+    const heartbeatSecondaryRes = await app.inject({
+      method: "POST",
+      url: "/v1/relay/heartbeat",
+      headers: {
+        authorization: `Bearer ${process.env.RELAY_HEARTBEAT_TOKEN!}`,
+      },
+      payload: {
+        edgeId: "eu-edge-integration-2",
+        region: "eu",
+        status: "online",
+        capacity: 500,
+        inFlight: 2,
+        rejectedOverlimit: 0,
+      },
+    });
+    expect(heartbeatSecondaryRes.statusCode).toBe(200);
 
     const email = `integration-relay-${randomUUID()}@example.com`;
     const password = "passw0rd123";
@@ -1037,6 +1132,30 @@ describe("api integration", () => {
     const startBody = startRes.json() as { assignedEdge: string };
     expect(startBody.assignedEdge).toBe("eu-edge-integration-1");
 
+    const apTunnelRes = await app.inject({
+      method: "POST",
+      url: "/v1/tunnels",
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: {
+        name: "relay-heartbeat-ap",
+        protocol: "http",
+        localAddr: "http://localhost:3001",
+        region: "ap",
+      },
+    });
+    expect(apTunnelRes.statusCode).toBe(201);
+    const apTunnelId = (apTunnelRes.json() as { id: string }).id;
+
+    const apStartRes = await app.inject({
+      method: "POST",
+      url: `/v1/tunnels/${apTunnelId}/start`,
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+      payload: {},
+    });
+    expect(apStartRes.statusCode).toBe(200);
+    const apStartBody = apStartRes.json() as { assignedEdge: string };
+    expect(apStartBody.assignedEdge).toBe("eu-edge-integration-1");
+
     const exchangeRes = await app.inject({
       method: "POST",
       url: "/v1/agent/exchange",
@@ -1057,5 +1176,33 @@ describe("api integration", () => {
     expect(adminEdges.statusCode).toBe(200);
     const adminEdgesBody = adminEdges.json() as { edges: Array<{ edge_id: string }> };
     expect(adminEdgesBody.edges.some((edge) => edge.edge_id === "eu-edge-integration-1")).toBe(true);
+  }, 30_000);
+
+  it("blocks login attempts from IPs with high abuse signals", async () => {
+    const email = `integration-abuse-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Abuse Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+
+    for (let i = 0; i < 10; i += 1) {
+      const failedLogin = await app.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        payload: { email, password: "wrong-password-123" },
+      });
+      expect(failedLogin.statusCode).toBe(401);
+    }
+
+    const blockedLogin = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: { email, password },
+    });
+    expect(blockedLogin.statusCode).toBe(429);
   }, 30_000);
 });
