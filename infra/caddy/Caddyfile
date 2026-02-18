@@ -1,0 +1,13 @@
+# Optional static edge/frontdoor for control plane and console.
+
+api.localhost {
+  reverse_proxy localhost:4000
+}
+
+console.localhost {
+  reverse_proxy localhost:3000
+}
+
+docs.localhost {
+  reverse_proxy localhost:3001
+}

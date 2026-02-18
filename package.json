@@ -1,0 +1,25 @@
+{
+  "name": "flyingdarkdevtunnel",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "turbo run format",
+    "typecheck": "turbo run typecheck",
+    "dev:infra": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
+    "dev:infra:down": "docker compose -f infra/docker/docker-compose.dev.yml down -v"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^20.17.57",
+    "eslint": "^9.20.1",
+    "prettier": "^3.5.0",
+    "turbo": "^2.4.2",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.24.1"
+  }
+}

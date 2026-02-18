@@ -1,0 +1,12 @@
+authtoken: your_authtoken
+apiBaseUrl: http://localhost:4000
+relayControlUrl: ws://localhost:8081/control
+tunnels:
+  - name: web
+    protocol: http
+    tunnelId: 11111111-1111-1111-1111-111111111111
+    localAddr: http://localhost:3000
+  - name: ssh
+    protocol: tcp
+    tunnelId: 22222222-2222-2222-2222-222222222222
+    localAddr: 127.0.0.1:22
