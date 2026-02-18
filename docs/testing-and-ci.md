@@ -14,7 +14,8 @@
   - plan upgrade to paid tier,
   - tunnel creation with auth/IP policy,
   - custom-domain create/verify/route,
-  - start tunnel and verify enriched agent token claims.
+  - start tunnel and verify enriched agent token claims,
+  - billing checkout provider fallbacks (`stripe`, `razorpay`, `paypal`) with mock URLs.
 
 ## End-to-end smoke test
 - Script: `scripts/integration-smoke.sh`

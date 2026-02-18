@@ -161,4 +161,33 @@ describe("api integration", () => {
     expect(adminDomain?.tls_mode).toBe("termination");
     expect(adminDomain?.tls_status).toBe("pending_issue");
   }, 30_000);
+
+  it("returns provider-specific mock checkout URLs when provider credentials are missing", async () => {
+    const email = `integration-billing-${randomUUID()}@example.com`;
+    const password = "passw0rd123";
+
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { email, password, orgName: "Integration Billing Org" },
+    });
+    expect(registerRes.statusCode).toBe(201);
+    const registerBody = registerRes.json() as { accessToken: string };
+    const accessToken = registerBody.accessToken;
+
+    const providers = ["stripe", "razorpay", "paypal"] as const;
+    for (const provider of providers) {
+      const checkoutRes = await app.inject({
+        method: "POST",
+        url: "/v1/billing/checkout-session",
+        headers: { authorization: `Bearer ${accessToken}` },
+        payload: { planCode: "pro", provider },
+      });
+      expect(checkoutRes.statusCode).toBe(200);
+      const checkoutBody = checkoutRes.json() as { mode: string; provider: string; checkoutUrl: string };
+      expect(checkoutBody.mode).toBe("mock");
+      expect(checkoutBody.provider).toBe(provider);
+      expect(checkoutBody.checkoutUrl).toContain(`provider=${provider}`);
+    }
+  }, 30_000);
 });

@@ -23,6 +23,14 @@ fdt http --tunnel-id <tunnel-id> --local http://localhost:3000`}</pre>
         <li>Rotate authtokens immediately after leakage.</li>
         <li>Use basic auth and IP restrictions for sensitive tunnels.</li>
       </ul>
+
+      <h2>Billing providers</h2>
+      <pre>{`POST /v1/billing/checkout-session
+{
+  "planCode": "pro",
+  "provider": "stripe" | "razorpay" | "paypal"
+}`}</pre>
+      <p>Webhook endpoints: <code>/v1/billing/webhook/stripe</code>, <code>/v1/billing/webhook/razorpay</code>, <code>/v1/billing/webhook/paypal</code></p>
     </article>
   );
 }
