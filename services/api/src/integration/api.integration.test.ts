@@ -270,5 +270,18 @@ describe("api integration", () => {
     );
     expect(entitlement.rowCount).toBe(1);
     expect(entitlement.rows[0].plan_code).toBe("pro");
+
+    const adminWebhookRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/billing-webhooks?provider=razorpay&status=processed&limit=50",
+      headers: { authorization: `Bearer ${registerBody.accessToken}` },
+    });
+    expect(adminWebhookRes.statusCode).toBe(200);
+    const adminWebhookBody = adminWebhookRes.json() as {
+      events: Array<{ provider: string; event_id: string; status: string }>;
+      stats: { failed: string; pending: string; processed: string };
+    };
+    expect(adminWebhookBody.events.some((row) => row.event_id === eventId && row.provider === "razorpay")).toBe(true);
+    expect(Number.parseInt(adminWebhookBody.stats.processed, 10)).toBeGreaterThan(0);
   }, 30_000);
 });

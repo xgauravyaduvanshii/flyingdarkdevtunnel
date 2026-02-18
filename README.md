@@ -108,6 +108,7 @@ bash scripts/integration-smoke.sh
   - `POST /v1/billing/webhook/paypal`
 - If provider keys are absent, API returns safe mock checkout URLs for local/dev.
 - Webhook security includes raw-body signature verification + idempotency event store (`billing_webhook_events`).
+- Admin billing ops endpoint: `GET /v1/admin/billing-webhooks`.
 
 ## Example multi-tunnel config
 

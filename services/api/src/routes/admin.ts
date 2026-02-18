@@ -58,6 +58,60 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { domains: domains.rows };
   });
 
+  app.get("/billing-webhooks", async (request) => {
+    const query = z
+      .object({
+        provider: z.enum(["stripe", "razorpay", "paypal"]).optional(),
+        status: z.enum(["pending", "processed", "failed"]).optional(),
+        limit: z.coerce.number().min(1).max(500).default(200),
+      })
+      .parse(request.query ?? {});
+
+    const events = await app.db.query(
+      `
+      SELECT
+        id,
+        provider,
+        event_id,
+        payload_hash,
+        status,
+        attempts,
+        received_at,
+        processed_at,
+        last_error
+      FROM billing_webhook_events
+      WHERE ($1::text IS NULL OR provider = $1)
+        AND ($2::text IS NULL OR status = $2)
+      ORDER BY received_at DESC
+      LIMIT $3
+    `,
+      [query.provider ?? null, query.status ?? null, query.limit],
+    );
+
+    const stats = await app.db.query<{
+      total: string;
+      pending: string;
+      processed: string;
+      failed: string;
+      stale_pending: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE status = 'pending')::text AS pending,
+        COUNT(*) FILTER (WHERE status = 'processed')::text AS processed,
+        COUNT(*) FILTER (WHERE status = 'failed')::text AS failed,
+        COUNT(*) FILTER (WHERE status = 'pending' AND received_at < NOW() - INTERVAL '5 minutes')::text AS stale_pending
+      FROM billing_webhook_events
+    `,
+    );
+
+    return {
+      events: events.rows,
+      stats: stats.rows[0] ?? { total: "0", pending: "0", processed: "0", failed: "0", stale_pending: "0" },
+    };
+  });
+
   app.patch("/users/:id/plan", async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ planCode: z.enum(["free", "pro", "team"]) }).parse(request.body);

@@ -14,6 +14,8 @@ const envSchema = z.object({
   PAYPAL_CLIENT_SECRET: z.string().optional(),
   PAYPAL_ENVIRONMENT: z.enum(["sandbox", "live"]).optional().default("sandbox"),
   BILLING_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+  BILLING_WEBHOOK_EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD: z.coerce.number().int().positive().default(10),
 });
 
 const env = envSchema.parse(process.env);
@@ -261,9 +263,58 @@ async function syncSubscriptions(): Promise<void> {
   }
 }
 
+async function cleanupWebhookEvents(): Promise<void> {
+  const result = await db.query(
+    `
+      DELETE FROM billing_webhook_events
+      WHERE received_at < NOW() - make_interval(days => $1::int)
+    `,
+    [env.BILLING_WEBHOOK_EVENT_RETENTION_DAYS],
+  );
+
+  if (result.rowCount && result.rowCount > 0) {
+    console.log(
+      `[worker-billing] pruned ${result.rowCount} webhook events older than ${env.BILLING_WEBHOOK_EVENT_RETENTION_DAYS}d`,
+    );
+  }
+}
+
+async function reportWebhookHealth(): Promise<void> {
+  const stats = await db.query<{
+    failed_1h: string;
+    failed_24h: string;
+    stale_pending: string;
+  }>(
+    `
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'failed' AND received_at > NOW() - INTERVAL '1 hour')::text AS failed_1h,
+        COUNT(*) FILTER (WHERE status = 'failed' AND received_at > NOW() - INTERVAL '24 hours')::text AS failed_24h,
+        COUNT(*) FILTER (WHERE status = 'pending' AND received_at < NOW() - INTERVAL '5 minutes')::text AS stale_pending
+      FROM billing_webhook_events
+    `,
+  );
+
+  const row = stats.rows[0];
+  if (!row) {
+    return;
+  }
+
+  const failed1h = Number.parseInt(row.failed_1h, 10) || 0;
+  const failed24h = Number.parseInt(row.failed_24h, 10) || 0;
+  const stalePending = Number.parseInt(row.stale_pending, 10) || 0;
+
+  if (failed1h >= env.BILLING_WEBHOOK_FAILURE_WARN_THRESHOLD || stalePending > 0) {
+    console.warn(
+      `[worker-billing] webhook health warning: failed_1h=${failed1h}, failed_24h=${failed24h}, stale_pending=${stalePending}`,
+    );
+  }
+}
+
 async function loop(): Promise<void> {
   while (true) {
     await syncSubscriptions();
+    await cleanupWebhookEvents();
+    await reportWebhookHealth();
     await new Promise((resolve) => setTimeout(resolve, env.BILLING_SYNC_INTERVAL_SECONDS * 1000));
   }
 }

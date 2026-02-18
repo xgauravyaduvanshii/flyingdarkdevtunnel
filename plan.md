@@ -17,6 +17,12 @@ Phase 1 (MVP hardening + production readiness improvements)
 - Initial CI workflow.
 
 ## Completed in this update
+- Billing operations tooling:
+  - Added admin billing webhook events endpoint and filtered visibility (`/v1/admin/billing-webhooks`).
+  - Added admin console billing ops page with summary stats and provider/status filters.
+  - Added worker-billing retention cleanup for `billing_webhook_events`.
+  - Added worker-billing health warnings for failed/stale webhook processing.
+  - Added integration coverage for admin webhook ops endpoint.
 - Billing webhook hardening:
   - Added raw-body signature verification path for Stripe and Razorpay.
   - Added webhook idempotency/replay store (`billing_webhook_events`).
@@ -60,8 +66,8 @@ Phase 1 (MVP hardening + production readiness improvements)
   - Move from probe-based status to issuance-event/renewal-state integration for production ACME.
   - Add cert-expiry alerting and on-call runbooks.
 - Payment production hardening:
-  - Add cleanup/retention jobs and admin visibility for webhook event store.
-  - Add provider-specific alerting thresholds for failed webhook processing.
+  - Add provider-specific alerting thresholds routed to external alerting channels.
+  - Add runbook automation for replay/reconciliation of failed events.
 
 ## Next (Implementation Queue)
 1. Certificate lifecycle sync worker:

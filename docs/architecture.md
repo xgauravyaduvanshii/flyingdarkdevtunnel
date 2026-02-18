@@ -21,6 +21,7 @@
 
 ## Async Workers
 - `services/worker-billing`: Stripe/Razorpay/PayPal subscription sync to entitlements.
+- `services/worker-billing`: webhook event retention cleanup + failure health checks.
 - `services/worker-inspector`: replay queue processing and retention cleanup.
 - `services/worker-certificates`: custom-domain TLS probe loop and certificate lifecycle status sync.
 
