@@ -21,7 +21,7 @@
   "devDependencies": {
     "typescript": "^5.8.2",
     "eslint": "^9.20.1",
-    "typescript-eslint": "^8.24.1",
+    "typescript-eslint": "^8.56.1",
     "@fdt/tsconfig": "workspace:*",
     "@fdt/eslint-config": "workspace:*"
   }
