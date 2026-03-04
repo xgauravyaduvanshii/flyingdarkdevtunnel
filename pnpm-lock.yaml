@@ -224,8 +224,8 @@ importers:
         specifier: ^9.0.2
         version: 9.0.3
       pg:
-        specifier: ^8.13.3
-        version: 8.18.0
+        specifier: ^8.19.0
+        version: 8.19.0
       stripe:
         specifier: ^17.6.0
         version: 17.7.0
@@ -249,8 +249,8 @@ importers:
         specifier: ^20.17.57
         version: 20.19.33
       '@types/pg':
-        specifier: ^8.11.11
-        version: 8.16.0
+        specifier: ^8.18.0
+        version: 8.18.0
       eslint:
         specifier: ^9.20.1
         version: 9.39.2
@@ -279,8 +279,8 @@ importers:
         specifier: ^16.4.7
         version: 16.6.1
       pg:
-        specifier: ^8.13.3
-        version: 8.18.0
+        specifier: ^8.19.0
+        version: 8.19.0
       stripe:
         specifier: ^17.6.0
         version: 17.7.0
@@ -298,8 +298,8 @@ importers:
         specifier: ^20.17.57
         version: 20.19.33
       '@types/pg':
-        specifier: ^8.11.11
-        version: 8.16.0
+        specifier: ^8.18.0
+        version: 8.18.0
       eslint:
         specifier: ^9.20.1
         version: 9.39.2
@@ -319,8 +319,8 @@ importers:
         specifier: ^16.4.7
         version: 16.6.1
       pg:
-        specifier: ^8.13.3
-        version: 8.18.0
+        specifier: ^8.19.0
+        version: 8.19.0
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -335,8 +335,8 @@ importers:
         specifier: ^20.17.57
         version: 20.19.33
       '@types/pg':
-        specifier: ^8.11.11
-        version: 8.16.0
+        specifier: ^8.18.0
+        version: 8.18.0
       eslint:
         specifier: ^9.20.1
         version: 9.39.2
@@ -356,8 +356,8 @@ importers:
         specifier: ^16.4.7
         version: 16.6.1
       pg:
-        specifier: ^8.13.3
-        version: 8.18.0
+        specifier: ^8.19.0
+        version: 8.19.0
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -372,8 +372,8 @@ importers:
         specifier: ^20.17.57
         version: 20.19.33
       '@types/pg':
-        specifier: ^8.11.11
-        version: 8.16.0
+        specifier: ^8.18.0
+        version: 8.18.0
       eslint:
         specifier: ^9.20.1
         version: 9.39.2
@@ -1400,8 +1400,8 @@ packages:
   '@types/node@20.19.33':
     resolution: {integrity: sha512-Rs1bVAIdBs5gbTIKza/tgpMuG1k3U/UMJLWecIMxNdJFDMzcM5LOiLVRYh3PilWEYDIeUDv7bpiHPLPsbydGcw==}
 
-  '@types/pg@8.16.0':
-    resolution: {integrity: sha512-RmhMd/wD+CF8Dfo+cVIy3RR5cl8CyfXQ0tGgW6XBL8L4LM/UTEbNXYRbLwU6w+CgrKBNbrQWt4FUtTfaU5jSYQ==}
+  '@types/pg@8.18.0':
+    resolution: {integrity: sha512-gT+oueVQkqnj6ajGJXblFR4iavIXWsGAFCk3dP4Kki5+a9R4NMt0JARdk6s8cUKcfUoqP5dAtDSLU8xYUTFV+Q==}
 
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
@@ -2147,20 +2147,20 @@ packages:
     resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
     engines: {node: '>=4.0.0'}
 
-  pg-pool@3.11.0:
-    resolution: {integrity: sha512-MJYfvHwtGp870aeusDh+hg9apvOe2zmpZJpyt+BMtzUWlVqbhFmMK6bOBXLBUPd7iRtIF9fZplDc7KrPN3PN7w==}
+  pg-pool@3.12.0:
+    resolution: {integrity: sha512-eIJ0DES8BLaziFHW7VgJEBPi5hg3Nyng5iKpYtj3wbcAUV9A1wLgWiY7ajf/f/oO1wfxt83phXPY8Emztg7ITg==}
     peerDependencies:
       pg: '>=8.0'
 
-  pg-protocol@1.11.0:
-    resolution: {integrity: sha512-pfsxk2M9M3BuGgDOfuy37VNRRX3jmKgMjcvAcWqNDpZSf4cUmv8HSOl5ViRQFsfARFn0KuUQTgLxVMbNq5NW3g==}
+  pg-protocol@1.12.0:
+    resolution: {integrity: sha512-uOANXNRACNdElMXJ0tPz6RBM0XQ61nONGAwlt8da5zs/iUOOCLBQOHSXnrC6fMsvtjxbOJrZZl5IScGv+7mpbg==}
 
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
 
-  pg@8.18.0:
-    resolution: {integrity: sha512-xqrUDL1b9MbkydY/s+VZ6v+xiMUmOUk7SS9d/1kpyQxoJ6U9AO1oIJyUWVZojbfe5Cc/oluutcgFG4L9RDP1iQ==}
+  pg@8.19.0:
+    resolution: {integrity: sha512-QIcLGi508BAHkQ3pJNptsFz5WQMlpGbuBGBaIaXsWK8mel2kQ/rThYI+DbgjUvZrIr7MiuEuc9LcChJoEZK1xQ==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -3864,10 +3864,10 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/pg@8.16.0':
+  '@types/pg@8.18.0':
     dependencies:
       '@types/node': 20.19.33
-      pg-protocol: 1.11.0
+      pg-protocol: 1.12.0
       pg-types: 2.2.0
 
   '@types/prop-types@15.7.15': {}
@@ -4672,11 +4672,11 @@ snapshots:
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.11.0(pg@8.18.0):
+  pg-pool@3.12.0(pg@8.19.0):
     dependencies:
-      pg: 8.18.0
+      pg: 8.19.0
 
-  pg-protocol@1.11.0: {}
+  pg-protocol@1.12.0: {}
 
   pg-types@2.2.0:
     dependencies:
@@ -4686,11 +4686,11 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.18.0:
+  pg@8.19.0:
     dependencies:
       pg-connection-string: 2.11.0
-      pg-pool: 3.11.0(pg@8.18.0)
-      pg-protocol: 1.11.0
+      pg-pool: 3.12.0(pg@8.19.0)
+      pg-protocol: 1.12.0
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
